@@ -10,15 +10,15 @@
 #ifndef ctrmus_version_h
 #define ctrmus_version_h
 
-#define CTRMUS_VERSION_MAJOR 0
-#define CTRMUS_VERSION_MINOR 10
+#define CTRMUS_VERSION_MAJOR 1
+#define CTRMUS_VERSION_MINOR 0
 #define CTRMUS_VERSION_MICRO 0
 
 #define CTRMUS_STR_(x) #x
 #define CTRMUS_STR(x) CTRMUS_STR_(x)
 
-/* Pre-release tag ("-beta.N"). Drop it for 1.0. */
-#define CTRMUS_VERSION_TAG "-beta.4"
+/* Pre-release tag ("-beta.N"), empty for releases. */
+#define CTRMUS_VERSION_TAG ""
 
 #define CTRMUS_VERSION CTRMUS_STR(CTRMUS_VERSION_MAJOR) "." \
                        CTRMUS_STR(CTRMUS_VERSION_MINOR) "." \
