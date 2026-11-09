@@ -69,7 +69,7 @@ i wanna put it on universal updater, might figure that out later.
 - x (or l+r or l+up because ???): pause/resume
 - r: next song
 - l: previous song
-- zl+zr: seek back/forwards. you can change the amount in the settings
+- zl/zr: seek back/forwards. you can change the amount in the settings
 - start: toggle shuffle
 - r+up / r+down: brightness
 
