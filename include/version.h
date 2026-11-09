@@ -1,0 +1,27 @@
+/**
+ * ctrmus - 3DS Music Player
+ * Single source of truth for the version number.
+ *
+ * The Makefile reads the three numeric macros below (for the CIA/banner
+ * version), and the app shows CTRMUS_VERSION on the splash screen and in
+ * the menu. Bump these together with a new CHANGELOG.md entry.
+ */
+
+#ifndef ctrmus_version_h
+#define ctrmus_version_h
+
+#define CTRMUS_VERSION_MAJOR 0
+#define CTRMUS_VERSION_MINOR 10
+#define CTRMUS_VERSION_MICRO 0
+
+#define CTRMUS_STR_(x) #x
+#define CTRMUS_STR(x) CTRMUS_STR_(x)
+
+/* Pre-release tag ("-beta.N"). Drop it for 1.0. */
+#define CTRMUS_VERSION_TAG "-beta.4"
+
+#define CTRMUS_VERSION CTRMUS_STR(CTRMUS_VERSION_MAJOR) "." \
+                       CTRMUS_STR(CTRMUS_VERSION_MINOR) "." \
+                       CTRMUS_STR(CTRMUS_VERSION_MICRO) CTRMUS_VERSION_TAG
+
+#endif

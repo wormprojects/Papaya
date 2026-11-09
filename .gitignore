@@ -1,0 +1,49 @@
+# Public Papaya repo. The export script only copies an allowlist; this is
+# the second safety net.
+
+# Builds
+build/
+output/
+*.3dsx
+*.cia
+*.3ds
+*.elf
+*.smdh
+*.bnr
+*.icn
+*.zip
+*.o
+*.a
+*.d
+
+# Music and audio (the one banner sound is allowed back in)
+*.mp3
+*.flac
+*.ogg
+*.opus
+*.m4a
+*.aac
+*.wav
+*.aiff
+*.aif
+*.sid
+!meta/audio.wav
+
+# Notes, docs and AI-assistant files. The README is the only doc.
+CLAUDE.md
+CLAUDE*.md
+.claude/
+*.md
+!README.md
+README-backup.md
+
+# Not ours / local scratch
+backup/
+tools/preview/
+tools/arttest/
+tools/fxtest/
+Makefile.linux
+.vscode/
+.DS_Store
+*.dSYM/
+*.swp
