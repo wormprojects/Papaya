@@ -4,12 +4,16 @@ Turn the splash logo's two layers into include/logo.h (RGB565 pixels).
 
     tools/logo/mklogo.sh            (exports the layers from
                                      meta/papaya.aseprite, then runs this)
-    python3 tools/logo/mklogo.py word.png note.png include/logo.h
+    python3 tools/logo/mklogo.py word.png note.png include/logo.h [overlay.png]
 
 Both PNGs are the full Aseprite canvas, one layer each, with hard
 (on/off) transparency. Each layer is cropped to its own pixels; the
 offsets in the header are relative to the box both layers cover together,
 which the splash centres on the screen. The note is drawn over the word.
+
+An optional overlay PNG (a layer drawn over the word at partial opacity,
+the opacity already in its alpha) is flattened onto the word first, only
+where the word has pixels, so the word keeps hard transparency.
 
 Pixels are stored column by column (like the top screen canvas), with
 LOGO_KEY marking the transparent ones.
@@ -40,6 +44,15 @@ def load(path):
     return im, box
 
 
+def flatten(word, overlay_path):
+    """The word with the overlay blended onto its own pixels."""
+    over = Image.open(overlay_path).convert("RGBA")
+    mixed = Image.alpha_composite(word, over)
+    keep = word.getchannel("A")
+    mixed.putalpha(keep)
+    return mixed
+
+
 def layer(name, im, box, ox, oy, out):
     x0, y0, x1, y1 = box
     w, h = x1 - x0, y1 - y0
@@ -66,9 +79,11 @@ def layer(name, im, box, ox, oy, out):
 
 
 def main():
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in (4, 5):
         sys.exit(__doc__)
     word, wbox = load(sys.argv[1])
+    if len(sys.argv) == 5:
+        word = flatten(word, sys.argv[4])
     note, nbox = load(sys.argv[2])
 
     ox, oy = min(wbox[0], nbox[0]), min(wbox[1], nbox[1])
