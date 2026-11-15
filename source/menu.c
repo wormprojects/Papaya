@@ -248,7 +248,7 @@ static int sliderSteps(enum item_id id)
 		case IT_SEEK:		return SEEK_STEP_COUNT;
 		case IT_DISC_SPEED:	return DISC_SPEED_COUNT;
 		case IT_DISTORTION:	return 21;		/* 0% .. 100% by 5 */
-		case IT_SPATIAL:	return 11;		/* 0% .. 100% by 10 */
+		case IT_SPATIAL:	return EFFECTS_SPATIAL_MAX / 10 + 1;	/* by 10 */
 		case IT_REVERB:		return 11;		/* 0% .. 100% by 10 */
 		case IT_REVERB_TIME:
 			return (EFFECTS_REVERB_TIME_MAX - EFFECTS_REVERB_TIME_MIN) / 5 + 1;

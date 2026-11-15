@@ -61,7 +61,7 @@ int effectsReverbTime(void)
 
 void effectsSetSpatial(int pct)
 {
-	spatialPct = clampInt(pct, 0, 100);
+	spatialPct = clampInt(pct, 0, EFFECTS_SPATIAL_MAX);
 }
 
 int effectsSpatial(void)
@@ -374,7 +374,6 @@ static void rvProcess(int16_t* s, size_t frames, int mixPct)
 /* Spatial widening                                                    */
 /* ------------------------------------------------------------------ */
 
-#define SP_MAX_SIDE		2.0f	/* side gain at 100% */
 /* Mid/side power balance the loudness trim assumes (side / mid). Music is
  * mostly mid; tuned with tools/fxtest. */
 #define SP_SIDE_RATIO	0.1f
@@ -393,7 +392,7 @@ static inline int16_t clip16(int32_t v)
  * value to the new one over the buffer. */
 static void spatialProcess(int16_t* s, size_t frames, int pct)
 {
-	float	g = 1.0f + (SP_MAX_SIDE - 1.0f) * pct / 100.0f;
+	float	g = 1.0f + pct / 100.0f;	/* 100% = side x2 */
 	float	t = sqrtf((1.0f + SP_SIDE_RATIO) /
 	                  (1.0f + SP_SIDE_RATIO * g * g));
 	int		mid = (int)lrintf(t * SP_ONE);
@@ -403,7 +402,8 @@ static void spatialProcess(int16_t* s, size_t frames, int pct)
 
 	for(size_t i = 0; i < frames; i++, s += 2)
 	{
-		/* Q12 gains: |sum| stays under 2^31 (65535 * 8192 * 2) */
+		/* Q12 gains (mid <= 1, side <= 3.3 at any setting): |sum| stays
+		 * under 1.3e9, inside int32 */
 		int32_t	m = s[0] + s[1];
 		int32_t	d = s[0] - s[1];
 		int32_t	gm = spMid >> 4;

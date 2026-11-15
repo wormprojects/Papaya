@@ -16,8 +16,8 @@
  *   few percent of an Old 3DS core at 44.1 kHz stereo. Buffers (~100 KB
  *   at 44.1 kHz) are allocated the first time it's used.
  *
- * - Spatial: stereo widening. The side signal (L-R) is boosted by up to 2x
- *   (intensity 0-100%) while the mid signal (L+R) stays put, so centred
+ * - Spatial: stereo widening. The side signal (L-R) is boosted by up to 4x
+ *   (intensity 0-300%, side gain 1 + pct/100) while the mid signal (L+R) stays put, so centred
  *   vocals stay centred and the rest spreads out. A fixed trim assuming a
  *   typical mid/side balance keeps the loudness about the same. Gains
  *   ramp across each buffer (no clicks when the slider moves). Integer
@@ -46,7 +46,9 @@ void effectsSetReverbMix(int pct);		/* 0 = off .. 100 = only reverb */
 int effectsReverbMix(void);
 void effectsSetReverbTime(int tenths);	/* RT60 in 0.1 s */
 int effectsReverbTime(void);
-void effectsSetSpatial(int pct);		/* 0 = off .. 100 = twice the width */
+#define EFFECTS_SPATIAL_MAX			300	/* % (100 = side x2, 300 = x4) */
+
+void effectsSetSpatial(int pct);		/* 0 = off .. EFFECTS_SPATIAL_MAX */
 int effectsSpatial(void);
 /** false forces the reverb off (performance mode) without changing the
  * mix setting. */
