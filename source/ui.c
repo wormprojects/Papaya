@@ -218,7 +218,11 @@ static void buildView(struct npView* v)
 	memset(v, 0, sizeof(*v));
 
 	/* Header */
+#ifdef PAPAYA_DESKTOP
+	v->brightnessPct = NP_NO_BRIGHTNESS;	/* the desktop has its own */
+#else
 	v->brightnessPct = brightnessPercent();
+#endif
 	if(tm != NULL)
 	{
 		char day[4], mon[4];
@@ -352,6 +356,7 @@ static void buildView(struct npView* v)
 	/* Effects */
 	v->speed = getPlaybackSpeed();
 	v->distortionPct = effectsDistortion();
+	v->spatialPct = effectsSpatial();
 	v->reverbMixPct = effectsReverbActiveMix();
 	v->reverbDecay = effectsReverbTime() / 10.0f;
 

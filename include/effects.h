@@ -2,7 +2,7 @@
  * ctrmus - 3DS Music Player
  * Audio effects applied to the decoded samples on the playback thread,
  * before they go to the DSP: distortion, then reverb (like pedals in that
- * order).
+ * order), then spatial widening.
  *
  * - Distortion: a tanh soft clipper. The intensity (0-100%) sets the drive
  *   (1x to 30x, exponential so the steps sound even), with make-up gain so
@@ -15,6 +15,14 @@
  *   one at any time setting. Mix is an equal-power crossfade. Floats; a
  *   few percent of an Old 3DS core at 44.1 kHz stereo. Buffers (~100 KB
  *   at 44.1 kHz) are allocated the first time it's used.
+ *
+ * - Spatial: stereo widening. The side signal (L-R) is boosted by up to 2x
+ *   (intensity 0-100%) while the mid signal (L+R) stays put, so centred
+ *   vocals stay centred and the rest spreads out. A fixed trim assuming a
+ *   typical mid/side balance keeps the loudness about the same. Gains
+ *   ramp across each buffer (no clicks when the slider moves). Integer
+ *   maths, no memory, nothing for mono files. Runs after the reverb so
+ *   the tail is widened too.
  *
  * Plain C with no libctru dependency (tools/fxtest tests it on a PC).
  * The setters are called from the UI thread; they only store ints, which
@@ -38,6 +46,8 @@ void effectsSetReverbMix(int pct);		/* 0 = off .. 100 = only reverb */
 int effectsReverbMix(void);
 void effectsSetReverbTime(int tenths);	/* RT60 in 0.1 s */
 int effectsReverbTime(void);
+void effectsSetSpatial(int pct);		/* 0 = off .. 100 = twice the width */
+int effectsSpatial(void);
 /** false forces the reverb off (performance mode) without changing the
  * mix setting. */
 void effectsSetReverbAllowed(bool allowed);

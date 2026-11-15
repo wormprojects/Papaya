@@ -1,6 +1,6 @@
 /**
  * ctrmus - 3DS Music Player
- * Distortion and reverb. See effects.h.
+ * Distortion, reverb and spatial widening. See effects.h.
  */
 
 #include <math.h>
@@ -21,6 +21,7 @@ static volatile int		distortionPct = 0;
 static volatile int		reverbMixPct = 0;
 static volatile int		reverbTenths = 20;
 static volatile bool	reverbAllowed = true;
+static volatile int		spatialPct = 0;
 
 static int clampInt(int v, int lo, int hi)
 {
@@ -56,6 +57,16 @@ void effectsSetReverbTime(int tenths)
 int effectsReverbTime(void)
 {
 	return reverbTenths;
+}
+
+void effectsSetSpatial(int pct)
+{
+	spatialPct = clampInt(pct, 0, 100);
+}
+
+int effectsSpatial(void)
+{
+	return spatialPct;
 }
 
 void effectsSetReverbAllowed(bool allowed)
@@ -360,6 +371,54 @@ static void rvProcess(int16_t* s, size_t frames, int mixPct)
 }
 
 /* ------------------------------------------------------------------ */
+/* Spatial widening                                                    */
+/* ------------------------------------------------------------------ */
+
+#define SP_MAX_SIDE		2.0f	/* side gain at 100% */
+/* Mid/side power balance the loudness trim assumes (side / mid). Music is
+ * mostly mid; tuned with tools/fxtest. */
+#define SP_SIDE_RATIO	0.1f
+#define SP_ONE			65536	/* unity in the ramped gains (Q16) */
+
+static int	spMid = SP_ONE;		/* current gains, Q16 */
+static int	spSide = SP_ONE;
+
+static inline int16_t clip16(int32_t v)
+{
+	return v > 32767 ? 32767 : v < -32768 ? -32768 : (int16_t)v;
+}
+
+/* L' = M + g S, R' = M - g S, with M = (L+R)/2 and S = (L-R)/2, times a
+ * trim t so the loudness stays about the same. Gains go from their old
+ * value to the new one over the buffer. */
+static void spatialProcess(int16_t* s, size_t frames, int pct)
+{
+	float	g = 1.0f + (SP_MAX_SIDE - 1.0f) * pct / 100.0f;
+	float	t = sqrtf((1.0f + SP_SIDE_RATIO) /
+	                  (1.0f + SP_SIDE_RATIO * g * g));
+	int		mid = (int)lrintf(t * SP_ONE);
+	int		side = (int)lrintf(t * g * SP_ONE);
+	int		dMid = (mid - spMid) / (int)(frames > 0 ? frames : 1);
+	int		dSide = (side - spSide) / (int)(frames > 0 ? frames : 1);
+
+	for(size_t i = 0; i < frames; i++, s += 2)
+	{
+		/* Q12 gains: |sum| stays under 2^31 (65535 * 8192 * 2) */
+		int32_t	m = s[0] + s[1];
+		int32_t	d = s[0] - s[1];
+		int32_t	gm = spMid >> 4;
+		int32_t	gs = spSide >> 4;
+
+		s[0] = clip16((m * gm + d * gs) >> 13);
+		s[1] = clip16((m * gm - d * gs) >> 13);
+		spMid += dMid;
+		spSide += dSide;
+	}
+	spMid = mid;
+	spSide = side;
+}
+
+/* ------------------------------------------------------------------ */
 /* Playback thread                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -369,6 +428,7 @@ void effectsStart(unsigned r, int ch)
 	channels = ch == 1 ? 1 : 2;
 	rvDirty = true;
 	rvWasOn = false;
+	spMid = spSide = SP_ONE;
 }
 
 void effectsProcess(int16_t* samples, size_t frames)
@@ -393,6 +453,16 @@ void effectsProcess(int16_t* samples, size_t frames)
 	}
 	else
 		rvWasOn = false;
+
+	if(channels == 2)
+	{
+		int sp = spatialPct;
+
+		if(sp > 0)
+			spatialProcess(samples, frames, sp);
+		else
+			spMid = spSide = SP_ONE;	/* next time ramps in from flat */
+	}
 }
 
 void effectsFree(void)

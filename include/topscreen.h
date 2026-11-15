@@ -60,11 +60,15 @@ enum npRepeat
 
 #define NP_MAX_LIST		24
 
+/* npView.brightnessPct for a device with no brightness control */
+#define NP_NO_BRIGHTNESS	(-2)
+
 /* Everything the Now Playing screen shows, already turned into strings. */
 struct npView
 {
 	/* Header */
-	int				brightnessPct;		/* < 0: unknown, shows "--%" */
+	/* < 0: unknown, shows "--%"; NP_NO_BRIGHTNESS: not shown */
+	int				brightnessPct;
 	char			clock[32];
 	int				batteryPct;			/* < 0: unknown, not shown */
 
@@ -102,6 +106,7 @@ struct npView
 	char			format[8];
 	float			speed;
 	int				distortionPct;		/* 0: off */
+	int				spatialPct;			/* 0: off */
 	int				reverbMixPct;		/* 0: off */
 	float			reverbDecay;		/* seconds */
 

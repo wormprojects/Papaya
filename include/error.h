@@ -1,4 +1,4 @@
-#if defined __arm__
+#if defined __arm__ || defined PAPAYA_DESKTOP
 #include <3ds.h>
 #endif
 
@@ -8,7 +8,7 @@
 #define FILE_NOT_SUPPORTED		1002
 #define UNSUPPORTED_CHANNELS	1003
 
-#if defined __arm__
+#if defined __arm__ || defined PAPAYA_DESKTOP
 
 /**
  * Struct to help error handling across threads.

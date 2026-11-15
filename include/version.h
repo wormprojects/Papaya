@@ -11,8 +11,8 @@
 #define ctrmus_version_h
 
 #define CTRMUS_VERSION_MAJOR 1
-#define CTRMUS_VERSION_MINOR 0
-#define CTRMUS_VERSION_MICRO 2
+#define CTRMUS_VERSION_MINOR 1
+#define CTRMUS_VERSION_MICRO 0
 
 #define CTRMUS_STR_(x) #x
 #define CTRMUS_STR(x) CTRMUS_STR_(x)

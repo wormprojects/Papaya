@@ -73,6 +73,7 @@ enum item_id
 	IT_EXIT,
 	IT_SPEED,
 	IT_DISTORTION,
+	IT_SPATIAL,
 	IT_REVERB,
 	IT_REVERB_TIME,
 	IT_THEME_EDIT,
@@ -122,12 +123,14 @@ static const struct item mainItems[] =
 	{ K_ITEM, IT_REPEAT, "Repeat", "Off, the whole playlist, or one song." },
 	{ K_ITEM, IT_QUEUE, "Queue...", "Play, move or remove queued songs." },
 	{ K_ITEM, IT_SEARCH, "Search...", "Filenames here and in subfolders." },
-	{ K_ITEM, IT_EFFECTS, "Effects...", "Speed, distortion, reverb." },
+	{ K_ITEM, IT_EFFECTS, "Effects...", "Speed, distortion, spatial, reverb." },
 	{ K_HEADER, IT_NONE, "DISPLAY", NULL },
 	{ K_ITEM, IT_THEME, "Theme", "A: pick from a list. </>: cycle." },
 	{ K_ITEM, IT_THEME_EDIT, "Edit theme...",
 	  "Make your own colours (\"Custom\" theme)." },
+#ifndef PAPAYA_DESKTOP	/* no backlight control on the desktop */
 	{ K_SLIDER, IT_BRIGHTNESS, "Brightness", "Both screens. Also R+Up/Down." },
+#endif
 	{ K_ITEM, IT_ARTISTS, "Artists in names",
 	  "How \"A, B - Song.mp3\" names show." },
 	{ K_ITEM, IT_TIME, "Time", "Time played, or time left (-0:12:34)." },
@@ -143,8 +146,10 @@ static const struct item mainItems[] =
 	{ K_HEADER, IT_NONE, "SYSTEM", NULL },
 	{ K_ITEM, IT_PERFORMANCE, "Performance mode",
 	  "Turns off tags, covers, reverb, disc." },
+#ifndef PAPAYA_DESKTOP	/* nor a slow CPU to speed up */
 	{ K_ITEM, IT_FAST, "New 3DS fast mode",
 	  "804 MHz CPU. Uses more battery." },
+#endif
 	{ K_ITEM, IT_REFRESH, "Force refresh",
 	  "Re-reads this folder's song titles." },
 	{ K_ITEM, IT_EXIT, "Exit Papaya", "Quit (HOME > Close also works)." },
@@ -155,6 +160,8 @@ static const struct item effectsItems[] =
 	{ K_SLIDER, IT_SPEED, "Speed", "Changes pitch too. A: back to 1.0x." },
 	{ K_SLIDER, IT_DISTORTION, "Distortion",
 	  "Intensity (soft clip). A: off." },
+	{ K_SLIDER, IT_SPATIAL, "Spatial",
+	  "Wider stereo, same centre. A: off." },
 	{ K_SLIDER, IT_REVERB, "Reverb", "How much reverb is mixed in. A: off." },
 	{ K_SLIDER, IT_REVERB_TIME, "Reverb time",
 	  "How long the echo rings out." },
@@ -241,6 +248,7 @@ static int sliderSteps(enum item_id id)
 		case IT_SEEK:		return SEEK_STEP_COUNT;
 		case IT_DISC_SPEED:	return DISC_SPEED_COUNT;
 		case IT_DISTORTION:	return 21;		/* 0% .. 100% by 5 */
+		case IT_SPATIAL:	return 11;		/* 0% .. 100% by 10 */
 		case IT_REVERB:		return 11;		/* 0% .. 100% by 10 */
 		case IT_REVERB_TIME:
 			return (EFFECTS_REVERB_TIME_MAX - EFFECTS_REVERB_TIME_MIN) / 5 + 1;
@@ -250,7 +258,7 @@ static int sliderSteps(enum item_id id)
 
 static bool zeroIsOff(enum item_id id)
 {
-	return id == IT_DISTORTION || id == IT_REVERB;
+	return id == IT_DISTORTION || id == IT_SPATIAL || id == IT_REVERB;
 }
 
 static int sliderIndex(enum item_id id)
@@ -275,6 +283,8 @@ static int sliderIndex(enum item_id id)
 			return settingsDiscSpeedIndex();
 		case IT_DISTORTION:
 			return effectsDistortion() / 5;
+		case IT_SPATIAL:
+			return effectsSpatial() / 10;
 		case IT_REVERB:
 			return effectsReverbActiveMix() / 10;
 		case IT_REVERB_TIME:
@@ -316,6 +326,7 @@ static void sliderSet(enum item_id id, int idx)
 		case IT_SEEK:		settingsSetSeekStepIndex(idx); break;
 		case IT_DISC_SPEED:	settingsSetDiscSpeedIndex(idx); break;
 		case IT_DISTORTION:	effectsSetDistortion(idx * 5); break;
+		case IT_SPATIAL:	effectsSetSpatial(idx * 10); break;
 		case IT_REVERB:		effectsSetReverbMix(idx * 10); break;
 		case IT_REVERB_TIME:
 			effectsSetReverbTime(EFFECTS_REVERB_TIME_MIN + idx * 5);
@@ -409,6 +420,12 @@ static void valueText(enum item_id id, char* buf, size_t len)
 				snprintf(buf, len, "off");
 			else
 				snprintf(buf, len, "%d%%", effectsDistortion());
+			break;
+		case IT_SPATIAL:
+			if(effectsSpatial() == 0)
+				snprintf(buf, len, "off");
+			else
+				snprintf(buf, len, "%d%%", effectsSpatial());
 			break;
 		case IT_REVERB:
 			if(effectsReverbActiveMix() == 0)
@@ -893,6 +910,7 @@ static void change(struct menu* m, struct screens* s, enum item_id id,
 		case IT_DISC_SPEED:
 		case IT_SPEED:
 		case IT_DISTORTION:
+		case IT_SPATIAL:
 		case IT_REVERB:
 		case IT_REVERB_TIME:
 			sliderSet(id, sliderIndex(id) + delta);
@@ -953,6 +971,7 @@ static enum menu_result activate(struct menu* m, struct screens* s,
 			break;
 
 		case IT_DISTORTION:
+		case IT_SPATIAL:
 		case IT_REVERB:
 			if(forced(id))
 				break;

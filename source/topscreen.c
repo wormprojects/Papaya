@@ -399,13 +399,16 @@ static void drawHeader(struct topCanvas* c, const struct topColors* col,
 {
 	char buf[16];
 
-	/* Brightness */
-	bitmap8(c, 1, HEADER_Y, iconSun, 1, col->text);
-	if(v->brightnessPct < 0)
-		snprintf(buf, sizeof(buf), "--%%");
-	else
-		snprintf(buf, sizeof(buf), "%d%%", v->brightnessPct);
-	text(c, 11, HEADER_Y, buf, col->text);
+	/* Brightness (NP_NO_BRIGHTNESS: no such control here, nothing shown) */
+	if(v->brightnessPct != NP_NO_BRIGHTNESS)
+	{
+		bitmap8(c, 1, HEADER_Y, iconSun, 1, col->text);
+		if(v->brightnessPct < 0)
+			snprintf(buf, sizeof(buf), "--%%");
+		else
+			snprintf(buf, sizeof(buf), "%d%%", v->brightnessPct);
+		text(c, 11, HEADER_Y, buf, col->text);
+	}
 
 	/* Clock */
 	textCenter(c, 0, TOP_W, HEADER_Y, v->clock, 30, col->text);
@@ -951,6 +954,12 @@ static void drawRightColumn(struct topCanvas* c, const struct topColors* col,
 	else
 		snprintf(buf, sizeof(buf), "off");
 	y = field(c, col, x, y, "distortion:", buf, 2);
+
+	if(v->spatialPct > 0)
+		snprintf(buf, sizeof(buf), "%d%%", v->spatialPct);
+	else
+		snprintf(buf, sizeof(buf), "off");
+	y = field(c, col, x, y, "spatial:", buf, 1);
 
 	if(v->reverbMixPct <= 0)
 		field(c, col, x, y, "reverb:", "off", 1);
