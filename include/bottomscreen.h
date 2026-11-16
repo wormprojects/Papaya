@@ -172,4 +172,31 @@ bool ssOnScrollbar(const struct ssView* v, int x, int y);
 /** Fraction 0..1 down the results' scrollbar track for y. */
 float ssScrollFraction(const struct ssView* v, int y);
 
+/* ------------------------------------------------------------------ */
+/* Value entry (Menu > Effects > Y on a slider): type a number          */
+/* ------------------------------------------------------------------ */
+
+struct veView
+{
+	const char*		name;			/* "speed" */
+	const char*		text;			/* what was typed so far */
+	const char*		unit;			/* "x", "%", "s" */
+	const char*		now;			/* current value, e.g. "1.00x" */
+	const char*		range;			/* e.g. "0.1x - 3.0x" */
+	const char*		result;			/* what it would be set to, or NULL */
+	bool			allowDot;		/* decimals can be typed */
+	bool			caret;			/* caret visible (blinks) */
+	int				keyRow, keyCol;	/* keyboard cursor */
+	int				pressedKey;		/* key code held by the stylus, or -1 */
+};
+
+/** Same keyboard as search; only digits (and '.' if allowed), del, clr
+ * and done work, the rest is drawn dim. */
+void veDraw(struct botCanvas* c, const struct topColors* col,
+            const struct veView* v);
+
+/** Move the keyboard cursor by (dx, dy), wrapping; Left/Right skip over
+ * the rest of a wide key. */
+void ssKeyMove(int* row, int* col, int dx, int dy);
+
 #endif

@@ -38,6 +38,7 @@
 #include "themes.h"
 #include "titles.h"
 #include "ui.h"
+#include "valueentry.h"
 
 enum app_state
 {
@@ -45,12 +46,14 @@ enum app_state
 	STATE_BROWSER,
 	STATE_MENU,
 	STATE_QUEUE,	/* queue editor */
-	STATE_SEARCH
+	STATE_SEARCH,
+	STATE_VALUE		/* typing an exact effect value */
 };
 
 /* The pages (one open at a time) */
 static struct queueEdit	queueEditor;
 static struct search	search;
+static struct valueEntry	valueEntry;
 
 /* Held-direction auto-repeat delay for browser navigation (ms). */
 #define KEY_REPEAT_DELAY_MS		500
@@ -399,6 +402,16 @@ int main(int argc, char **argv)
 				menuResume(&menu, &screens);
 			}
 		}
+		else if(appState == STATE_VALUE)
+		{
+			/* Done or cancelled: back to the menu (it redraws its
+			 * values, and the top screen was told to redraw). */
+			if(valueEntryInput(&valueEntry, kDown, kHeld) != PAGE_STAY)
+			{
+				appState = STATE_MENU;
+				menuResume(&menu, &screens);
+			}
+		}
 		else if(appState == STATE_MENU)
 		{
 			/* ======================================================== */
@@ -428,6 +441,12 @@ int main(int argc, char **argv)
 				searchOpen(&search, &browser, true);
 				appState = STATE_SEARCH;
 			}
+			if(r == MENU_VALUE)
+			{
+				valueEntryOpen(&valueEntry,
+				               (enum valueTarget)menuValueTarget(&menu));
+				appState = STATE_VALUE;
+			}
 		}
 		else
 		{
@@ -448,6 +467,8 @@ int main(int argc, char **argv)
 			queueEditUpdate(&queueEditor);
 		else if(appState == STATE_SEARCH)
 			searchUpdate(&search);
+		else if(appState == STATE_VALUE)
+			valueEntryUpdate(&valueEntry);
 
 		/* The "p>" line and the queue button on the bottom screen. */
 		browserSetPlaylistDir(&browser, playerPlaylistDir());

@@ -450,30 +450,9 @@ static enum page_result pressButton(struct search* s, struct browser* b,
 	return PAGE_STAY;
 }
 
-/* Keyboard cursor: Left/Right skip over the rest of a wide key. */
 static void moveKey(struct search* s, int dx, int dy)
 {
-	int r = s->keyRow, c = s->keyCol;
-	int code = ssKeyCode(r, c);
-
-	if(dy != 0)
-		r = (r + dy + SS_KB_ROWS) % SS_KB_ROWS;
-	if(dx > 0)
-	{
-		while(c < SS_KB_COLS && ssKeyCode(r, c) == code)
-			c++;
-		if(c >= SS_KB_COLS)
-			c = 0;
-	}
-	else if(dx < 0)
-	{
-		while(c >= 0 && ssKeyCode(r, c) == code)
-			c--;
-		if(c < 0)
-			c = SS_KB_COLS - 1;
-	}
-	s->keyRow = r;
-	s->keyCol = c;
+	ssKeyMove(&s->keyRow, &s->keyCol, dx, dy);
 	s->dirty = true;
 }
 

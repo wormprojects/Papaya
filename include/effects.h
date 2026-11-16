@@ -2,7 +2,7 @@
  * ctrmus - 3DS Music Player
  * Audio effects applied to the decoded samples on the playback thread,
  * before they go to the DSP: distortion, then reverb (like pedals in that
- * order), then spatial widening.
+ * order), with bitcrush after the distortion and spatial widening last.
  *
  * - Distortion: a tanh soft clipper. The intensity (0-100%) sets the drive
  *   (1x to 30x, exponential so the steps sound even), with make-up gain so
@@ -16,6 +16,14 @@
  *   few percent of an Old 3DS core at 44.1 kHz stereo. Buffers (~100 KB
  *   at 44.1 kHz) are allocated the first time it's used.
  *
+ * - Bitcrush: bit depth and sample rate. The samples are 16-bit, so 32, 24
+ *   and 16 bit are the same thing (off); below that the low bits are
+ *   rounded away (nearest step, so silence stays silent; 1 bit is three
+ *   levels). The sample rate holds each sample until the next one is due
+ *   at that rate (sample and hold, no filter: the aliasing is the sound).
+ *   32k, the top setting, is off (the 3DS's own rate); a song already
+ *   at a lower rate than the setting is left alone. Integer maths, no
+ *   memory.
  * - Spatial: stereo widening. The side signal (L-R) is boosted by up to 4x
  *   (intensity 0-300%, side gain 1 + pct/100) while the mid signal (L+R) stays put, so centred
  *   vocals stay centred and the rest spreads out. A fixed trim assuming a
@@ -35,6 +43,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #define EFFECTS_REVERB_TIME_MIN		5	/* tenths of a second */
 #define EFFECTS_REVERB_TIME_MAX		60
@@ -46,15 +55,49 @@ void effectsSetReverbMix(int pct);		/* 0 = off .. 100 = only reverb */
 int effectsReverbMix(void);
 void effectsSetReverbTime(int tenths);	/* RT60 in 0.1 s */
 int effectsReverbTime(void);
-#define EFFECTS_SPATIAL_MAX			300	/* % (100 = side x2, 300 = x4) */
+#define EFFECTS_SPATIAL_MAX			300	/* slider: % (100 = side x2, 300 = x4) */
+#define EFFECTS_SPATIAL_CUSTOM_MAX	1000	/* typed values go up to this */
 
-void effectsSetSpatial(int pct);		/* 0 = off .. EFFECTS_SPATIAL_MAX */
+#define EFFECTS_BITS_OFF			32	/* 32, 24 and 16 bit do nothing */
+#define EFFECTS_BITS_MIN			1
+#define EFFECTS_RATE_OFF			32000	/* Hz: the top setting is off */
+#define EFFECTS_RATE_MIN			100
+
+void effectsSetBitDepth(int bits);		/* EFFECTS_BITS_MIN .. 32 */
+int effectsBitDepth(void);
+void effectsSetSampleRate(int hz);		/* EFFECTS_RATE_MIN .. 32000 */
+int effectsSampleRate(void);
+
+void effectsSetSpatial(int pct);		/* 0 = off .. EFFECTS_SPATIAL_CUSTOM_MAX */
 int effectsSpatial(void);
 /** false forces the reverb off (performance mode) without changing the
  * mix setting. */
 void effectsSetReverbAllowed(bool allowed);
 /** The reverb mix in use now: 0 when off or not allowed. */
 int effectsReverbActiveMix(void);
+
+/** "1.0x", or "0.99x" when the speed isn't a multiple of 0.1 (typed
+ * values; the slider steps by 0.1). */
+static inline void effectsFormatSpeed(char* buf, size_t len, float speed)
+{
+	int h = (int)(speed * 100.0f + 0.5f);
+
+	if(h % 10 == 0)
+		snprintf(buf, len, "%d.%dx", h / 100, (h / 10) % 10);
+	else
+		snprintf(buf, len, "%d.%02dx", h / 100, h % 100);
+}
+
+/** "32k", "1.5k", or "750 Hz" / "22050 Hz" for the rest. */
+static inline void effectsFormatRate(char* buf, size_t len, int hz)
+{
+	if(hz >= 1000 && hz % 1000 == 0)
+		snprintf(buf, len, "%dk", hz / 1000);
+	else if(hz >= 1000 && hz % 100 == 0)
+		snprintf(buf, len, "%d.%dk", hz / 1000, (hz / 100) % 10);
+	else
+		snprintf(buf, len, "%d Hz", hz);
+}
 
 /* Playback thread */
 /** A new song starts: clears the reverb tail. */

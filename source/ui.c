@@ -356,6 +356,8 @@ static void buildView(struct npView* v)
 	/* Effects */
 	v->speed = getPlaybackSpeed();
 	v->distortionPct = effectsDistortion();
+	v->bitDepth = effectsBitDepth();
+	v->sampleRate = effectsSampleRate();
 	v->spatialPct = effectsSpatial();
 	v->reverbMixPct = effectsReverbActiveMix();
 	v->reverbDecay = effectsReverbTime() / 10.0f;

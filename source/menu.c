@@ -26,6 +26,7 @@
 #include "settings.h"
 #include "themes.h"
 #include "ui.h"
+#include "valueentry.h"
 #include "version.h"
 
 #define COLS		40
@@ -73,6 +74,8 @@ enum item_id
 	IT_EXIT,
 	IT_SPEED,
 	IT_DISTORTION,
+	IT_BITDEPTH,
+	IT_SAMPLERATE,
 	IT_SPATIAL,
 	IT_REVERB,
 	IT_REVERB_TIME,
@@ -123,7 +126,7 @@ static const struct item mainItems[] =
 	{ K_ITEM, IT_REPEAT, "Repeat", "Off, the whole playlist, or one song." },
 	{ K_ITEM, IT_QUEUE, "Queue...", "Play, move or remove queued songs." },
 	{ K_ITEM, IT_SEARCH, "Search...", "Filenames here and in subfolders." },
-	{ K_ITEM, IT_EFFECTS, "Effects...", "Speed, distortion, spatial, reverb." },
+	{ K_ITEM, IT_EFFECTS, "Effects...", "Speed, distortion, bitcrush, spatial." },
 	{ K_HEADER, IT_NONE, "DISPLAY", NULL },
 	{ K_ITEM, IT_THEME, "Theme", "A: pick from a list. </>: cycle." },
 	{ K_ITEM, IT_THEME_EDIT, "Edit theme...",
@@ -157,14 +160,18 @@ static const struct item mainItems[] =
 
 static const struct item effectsItems[] =
 {
-	{ K_SLIDER, IT_SPEED, "Speed", "Changes pitch too. A: back to 1.0x." },
+	{ K_SLIDER, IT_SPEED, "Speed", "Changes pitch. A: 1.0x. Y: type value." },
 	{ K_SLIDER, IT_DISTORTION, "Distortion",
-	  "Intensity (soft clip). A: off." },
+	  "Soft clip. A: off. Y: type a value." },
+	{ K_SLIDER, IT_BITDEPTH, "Bit depth",
+	  "Grittier. A: 32 bit. Y: type a value." },
+	{ K_SLIDER, IT_SAMPLERATE, "Sample rate",
+	  "Lo-fi. A: 32k (off). Y: type a value." },
 	{ K_SLIDER, IT_SPATIAL, "Spatial",
-	  "Wider stereo, same centre. A: off." },
-	{ K_SLIDER, IT_REVERB, "Reverb", "How much reverb is mixed in. A: off." },
+	  "Wider stereo. A: off. Y: type a value." },
+	{ K_SLIDER, IT_REVERB, "Reverb", "Reverb amount. A: off. Y: type a value." },
 	{ K_SLIDER, IT_REVERB_TIME, "Reverb time",
-	  "How long the echo rings out." },
+	  "How long it rings out. Y: type a value." },
 };
 
 #define TC_HELP "</> change, hold to run. Shown live."
@@ -237,6 +244,26 @@ static struct themeColor themeChannelColor(enum item_id id, int* chan)
 	return themeEditGet((id - IT_TC_BASE) / THEME_CHANNELS);
 }
 
+/* Bitcrush sliders: left is off (the first step), going right crushes
+ * more. 32, 24 and 16 bit are all the same (the audio is 16-bit); typed
+ * values can be anywhere in between and snap to these when moved. */
+static const int bitSteps[] = { 32, 24, 16, 12, 10, 8, 6, 5, 4, 3, 2 };
+static const int rateSteps[] =
+	{ 32000, 24000, 16000, 12000, 8000, 6000, 4000, 3000, 2000, 1500,
+	  1000, 750, 500, 250 };
+#define BIT_STEPS	((int)(sizeof(bitSteps) / sizeof(bitSteps[0])))
+#define RATE_STEPS	((int)(sizeof(rateSteps) / sizeof(rateSteps[0])))
+
+/* Slider position of v in a descending table: the first step at or below
+ * it. */
+static int tableIndex(const int* t, int n, int v)
+{
+	for(int i = 0; i < n; i++)
+		if(t[i] <= v)
+			return i;
+	return n - 1;
+}
+
 static int sliderSteps(enum item_id id)
 {
 	if(isThemeChannel(id))
@@ -248,6 +275,8 @@ static int sliderSteps(enum item_id id)
 		case IT_SEEK:		return SEEK_STEP_COUNT;
 		case IT_DISC_SPEED:	return DISC_SPEED_COUNT;
 		case IT_DISTORTION:	return 21;		/* 0% .. 100% by 5 */
+		case IT_BITDEPTH:	return BIT_STEPS;
+		case IT_SAMPLERATE:	return RATE_STEPS;
 		case IT_SPATIAL:	return EFFECTS_SPATIAL_MAX / 10 + 1;	/* by 10 */
 		case IT_REVERB:		return 11;		/* 0% .. 100% by 10 */
 		case IT_REVERB_TIME:
@@ -258,10 +287,11 @@ static int sliderSteps(enum item_id id)
 
 static bool zeroIsOff(enum item_id id)
 {
-	return id == IT_DISTORTION || id == IT_SPATIAL || id == IT_REVERB;
+	return id == IT_DISTORTION || id == IT_SPATIAL || id == IT_REVERB ||
+	       id == IT_BITDEPTH || id == IT_SAMPLERATE;
 }
 
-static int sliderIndex(enum item_id id)
+static int sliderIndexRaw(enum item_id id)
 {
 	if(isThemeChannel(id))
 	{
@@ -283,6 +313,10 @@ static int sliderIndex(enum item_id id)
 			return settingsDiscSpeedIndex();
 		case IT_DISTORTION:
 			return effectsDistortion() / 5;
+		case IT_BITDEPTH:
+			return tableIndex(bitSteps, BIT_STEPS, effectsBitDepth());
+		case IT_SAMPLERATE:
+			return tableIndex(rateSteps, RATE_STEPS, effectsSampleRate());
 		case IT_SPATIAL:
 			return effectsSpatial() / 10;
 		case IT_REVERB:
@@ -292,6 +326,91 @@ static int sliderIndex(enum item_id id)
 		default:
 			return 0;
 	}
+}
+
+/* Position on the slider: a typed value past the last step (spatial
+ * 500%) sits at the end. */
+static int sliderIndex(enum item_id id)
+{
+	int idx = sliderIndexRaw(id);
+	int steps = sliderSteps(id);
+
+	return idx < 0 ? 0 : idx > steps - 1 ? steps - 1 : idx;
+}
+
+#define NO_MOVE	(-1000000)
+
+/* The index to go to after Left/Right (delta -1/+1), or NO_MOVE.
+ *
+ * Typed values (valueentry.c) can sit between two steps, or past the
+ * last one. Moving then goes to the neighbouring step in that direction
+ * (0.99x: Right -> 1.0x, Left -> 0.9x), not a whole step from where the
+ * value rounds to (which would make 0.99x -> 1.0x -> 1.1x feel like a
+ * double step, or 0.99x -> 1.09x). Past the end: Left goes to the last
+ * step, Right does nothing. */
+/* Right crushes more (a lower value), Left less: the next step below or
+ * above v, whether v is on a step or typed in between. */
+static int tableMoved(const int* t, int n, int v, int delta)
+{
+	if(delta > 0)
+	{
+		for(int i = 0; i < n; i++)
+			if(t[i] < v)
+				return i;
+		return NO_MOVE;
+	}
+	for(int i = n - 1; i >= 0; i--)
+		if(t[i] > v)
+			return i;
+	return NO_MOVE;
+}
+
+static int sliderMoved(enum item_id id, int delta)
+{
+	int v, origin, step, off, fi;
+
+	switch(id)
+	{
+		case IT_BITDEPTH:
+			return tableMoved(bitSteps, BIT_STEPS, effectsBitDepth(), delta);
+		case IT_SAMPLERATE:
+			return tableMoved(rateSteps, RATE_STEPS, effectsSampleRate(),
+			                  delta);
+		case IT_SPEED:
+			v = (int)(getPlaybackSpeed() * 100.0f + 0.5f);
+			origin = 10;
+			step = 10;
+			break;
+		case IT_DISTORTION:
+			v = effectsDistortion();
+			origin = 0;
+			step = 5;
+			break;
+		case IT_SPATIAL:
+			v = effectsSpatial();
+			origin = 0;
+			step = 10;
+			break;
+		case IT_REVERB:
+			v = effectsReverbActiveMix();
+			origin = 0;
+			step = 10;
+			break;
+		case IT_REVERB_TIME:
+			v = effectsReverbTime();
+			origin = EFFECTS_REVERB_TIME_MIN;
+			step = 5;
+			break;
+		default:
+			return sliderIndexRaw(id) + delta;
+	}
+	off = v - origin;
+	if(off < 0)
+		off = 0;
+	fi = off / step;
+	if(delta > 0)
+		return fi >= sliderSteps(id) - 1 ? NO_MOVE : fi + 1;
+	return off % step == 0 ? fi - 1 : fi;
 }
 
 static void sliderSet(enum item_id id, int idx)
@@ -326,6 +445,8 @@ static void sliderSet(enum item_id id, int idx)
 		case IT_SEEK:		settingsSetSeekStepIndex(idx); break;
 		case IT_DISC_SPEED:	settingsSetDiscSpeedIndex(idx); break;
 		case IT_DISTORTION:	effectsSetDistortion(idx * 5); break;
+		case IT_BITDEPTH:	effectsSetBitDepth(bitSteps[idx]); break;
+		case IT_SAMPLERATE:	effectsSetSampleRate(rateSteps[idx]); break;
 		case IT_SPATIAL:	effectsSetSpatial(idx * 10); break;
 		case IT_REVERB:		effectsSetReverbMix(idx * 10); break;
 		case IT_REVERB_TIME:
@@ -413,13 +534,19 @@ static void valueText(enum item_id id, char* buf, size_t len)
 			snprintf(buf, len, ">");
 			break;
 		case IT_SPEED:
-			snprintf(buf, len, "%.1fx", (double)getPlaybackSpeed());
+			effectsFormatSpeed(buf, len, getPlaybackSpeed());
 			break;
 		case IT_DISTORTION:
 			if(effectsDistortion() == 0)
 				snprintf(buf, len, "off");
 			else
 				snprintf(buf, len, "%d%%", effectsDistortion());
+			break;
+		case IT_BITDEPTH:
+			snprintf(buf, len, "%d bit", effectsBitDepth());
+			break;
+		case IT_SAMPLERATE:
+			effectsFormatRate(buf, len, effectsSampleRate());
 			break;
 		case IT_SPATIAL:
 			if(effectsSpatial() == 0)
@@ -910,11 +1037,18 @@ static void change(struct menu* m, struct screens* s, enum item_id id,
 		case IT_DISC_SPEED:
 		case IT_SPEED:
 		case IT_DISTORTION:
+		case IT_BITDEPTH:
+		case IT_SAMPLERATE:
 		case IT_SPATIAL:
 		case IT_REVERB:
 		case IT_REVERB_TIME:
-			sliderSet(id, sliderIndex(id) + delta);
+		{
+			int to = sliderMoved(id, delta);
+
+			if(to != NO_MOVE)
+				sliderSet(id, to);
 			break;
+		}
 
 		case IT_ARTISTS:
 			settingsSetFilenameArtists((enum filename_artists)
@@ -971,6 +1105,8 @@ static enum menu_result activate(struct menu* m, struct screens* s,
 			break;
 
 		case IT_DISTORTION:
+		case IT_BITDEPTH:
+		case IT_SAMPLERATE:
 		case IT_SPATIAL:
 		case IT_REVERB:
 			if(forced(id))
@@ -1176,6 +1312,22 @@ static enum menu_result themesInput(struct menu* m, u32 kDown, u32 dirs,
 	return MENU_OPEN;
 }
 
+/* The value entry target for an effect slider, or -1. */
+static int valueTargetOf(enum item_id id)
+{
+	switch(id)
+	{
+		case IT_SPEED:		return VT_SPEED;
+		case IT_DISTORTION:	return VT_DISTORTION;
+		case IT_BITDEPTH:	return VT_BITDEPTH;
+		case IT_SAMPLERATE:	return VT_SAMPLERATE;
+		case IT_SPATIAL:	return VT_SPATIAL;
+		case IT_REVERB:		return VT_REVERB;
+		case IT_REVERB_TIME:return VT_REVERB_TIME;
+		default:			return -1;
+	}
+}
+
 enum menu_result menuHandleInput(struct menu* m, u32 kDown, u32 kHeld,
                                  struct screens* s, struct browser* b)
 {
@@ -1224,5 +1376,23 @@ enum menu_result menuHandleInput(struct menu* m, u32 kDown, u32 kHeld,
 	if(kDown & KEY_A)
 		return activate(m, s, b, curPage(m)->items[m->selected].id);
 
+	/* Y on an effect: type an exact value */
+	if(kDown & KEY_Y)
+	{
+		enum item_id	id = p->items[m->selected].id;
+		int				t = valueTargetOf(id);
+
+		if(t >= 0 && !forced(id))
+		{
+			m->entry = t;
+			return MENU_VALUE;
+		}
+	}
+
 	return MENU_OPEN;
+}
+
+int menuValueTarget(const struct menu* m)
+{
+	return m->entry;
 }

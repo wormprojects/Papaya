@@ -536,8 +536,16 @@ static const char* keyLabel(int code)
 	}
 }
 
+static bool numericKey(int code, bool allowDot)
+{
+	return (code >= '0' && code <= '9') || (code == '.' && allowDot) ||
+	       code == SS_KEY_DEL || code == SS_KEY_CLEAR || code == SS_KEY_DONE;
+}
+
+/* numeric: value entry, keys that do nothing there are drawn dim. */
 static void keyboard(struct botCanvas* c, const struct palette* p,
-                     const struct ssView* v)
+                     int keyRow, int keyCol, int pressedKey, bool numeric,
+                     bool allowDot)
 {
 	for(int r = 0; r < SS_KB_ROWS; r++)
 	{
@@ -556,10 +564,9 @@ static void keyboard(struct botCanvas* c, const struct palette* p,
 			while(end + 1 < SS_KB_COLS && ssKeyCode(r, end + 1) == code)
 				end++;
 			w = (end - col + 1) * SS_KEY_W + (end - col) * SS_KEY_GX;
-			cursor = v->keyRow == r && v->keyCol >= col &&
-			         v->keyCol <= end;
+			cursor = keyRow == r && keyCol >= col && keyCol <= end;
 
-			if(v->pressedKey == code)
+			if(pressedKey == code)
 			{
 				face = p->text;
 				fg = p->bg;
@@ -585,6 +592,9 @@ static void keyboard(struct botCanvas* c, const struct palette* p,
 				fg = p->text;
 			}
 
+			if(numeric && !numericKey(code, allowDot) &&
+			   face != p->accent && face != p->text)
+				fg = blend(p->bg, p->text, 95);
 			box(c, x, y, w, SS_KEY_H, face);
 			text(c, x + (w - (int)strlen(label) * CH) / 2,
 			     y + (SS_KEY_H - CH) / 2 + 1, label, fg);
@@ -755,7 +765,7 @@ void ssDraw(struct botCanvas* c, const struct topColors* col,
 
 	if(v->typing)
 	{
-		keyboard(c, &p, v);
+		keyboard(c, &p, v->keyRow, v->keyCol, v->pressedKey, false, false);
 		hints(c, &p, " A key  B delete  Y results  SEL close");
 		return;
 	}
@@ -838,4 +848,74 @@ float ssScrollFraction(const struct ssView* v, int y)
 	          (float)(ssRowsShown(v) * SS_ROW_H - 1);
 
 	return f < 0.0f ? 0.0f : f > 1.0f ? 1.0f : f;
+}
+
+void ssKeyMove(int* row, int* col, int dx, int dy)
+{
+	int r = *row, c = *col;
+	int code = ssKeyCode(r, c);
+
+	if(dy != 0)
+		r = (r + dy + SS_KB_ROWS) % SS_KB_ROWS;
+	if(dx > 0)
+	{
+		while(c < SS_KB_COLS && ssKeyCode(r, c) == code)
+			c++;
+		if(c >= SS_KB_COLS)
+			c = 0;
+	}
+	else if(dx < 0)
+	{
+		while(c >= 0 && ssKeyCode(r, c) == code)
+			c--;
+		if(c < 0)
+			c = SS_KB_COLS - 1;
+	}
+	*row = r;
+	*col = c;
+}
+
+/* ------------------------------------------------------------------ */
+/* Value entry                                                         */
+/* ------------------------------------------------------------------ */
+
+void veDraw(struct botCanvas* c, const struct topColors* col,
+            const struct veView* v)
+{
+	struct palette	p;
+	char			title[40];
+	int				x = SS_FIELD_X + 8;
+	int				ty = SS_FIELD_Y + 6;
+	int				qlen = (int)strlen(v->text);
+
+	palette(col, &p);
+	fill(c, 0, 0, BOT_W, BOT_H, p.bg);
+
+	snprintf(title, sizeof(title), "set %s", v->name);
+	header(c, &p, title, "custom value");
+
+	/* The number, with its unit on the right */
+	outline(c, SS_FIELD_X, SS_FIELD_Y, SS_FIELD_W, SS_FIELD_H, p.accent);
+	if(qlen == 0)
+		text(c, x, ty, "type a number", p.dim);
+	else
+		x = text(c, x, ty, v->text, p.text);
+	textRight(c, SS_FIELD_X + SS_FIELD_W - 8, ty, v->unit, p.dim);
+	if(v->caret)
+		fill(c, qlen == 0 ? x : x + 1, ty - 1, 2, 10, p.bar);
+
+	text(c, 6, 44, "now:", p.dim);
+	text(c, 6 + 7 * CH, 44, v->now, p.text);
+	text(c, 6, 58, "range:", p.dim);
+	text(c, 6 + 7 * CH, 58, v->range, p.text);
+	if(v->result != NULL)
+		text(c, 6, 76, v->result, p.accent);
+	else
+		text(c, 6, 76, "Y sets it, B cancels when empty", p.dim);
+	text(c, 6, 100, "Moving the slider later snaps it", p.dim);
+	text(c, 6, 110, "back to its steps.", p.dim);
+
+	keyboard(c, &p, v->keyRow, v->keyCol, v->pressedKey, true,
+	         v->allowDot);
+	hints(c, &p, " A key  B delete  Y set  SEL cancel");
 }

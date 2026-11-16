@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "effects.h"
 #include "logo.h"
 #include "topscreen.h"
 
@@ -947,13 +948,25 @@ static void drawRightColumn(struct topCanvas* c, const struct topColors* col,
 		return;
 	y = sectionHeader(c, col, true, y, "effects");
 
-	snprintf(buf, sizeof(buf), "%.1fx", (double)v->speed);
+	effectsFormatSpeed(buf, sizeof(buf), v->speed);
 	y = field(c, col, x, y, "speed:", buf, 1);
 	if(v->distortionPct > 0)
 		snprintf(buf, sizeof(buf), "%d%%", v->distortionPct);
 	else
 		snprintf(buf, sizeof(buf), "off");
 	y = field(c, col, x, y, "distortion:", buf, 2);
+
+	if(v->bitDepth < 16)
+		snprintf(buf, sizeof(buf), "%d bit", v->bitDepth);
+	else
+		snprintf(buf, sizeof(buf), "off");
+	y = field(c, col, x, y, "bits:", buf, 1);
+
+	if(v->sampleRate < 32000)
+		effectsFormatRate(buf, sizeof(buf), v->sampleRate);
+	else
+		snprintf(buf, sizeof(buf), "off");
+	y = field(c, col, x, y, "rate:", buf, 1);
 
 	if(v->spatialPct > 0)
 		snprintf(buf, sizeof(buf), "%d%%", v->spatialPct);

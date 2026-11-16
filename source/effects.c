@@ -1,6 +1,6 @@
 /**
  * ctrmus - 3DS Music Player
- * Distortion, reverb and spatial widening. See effects.h.
+ * Distortion, bitcrush, reverb and spatial widening. See effects.h.
  */
 
 #include <math.h>
@@ -22,6 +22,12 @@ static volatile int		reverbMixPct = 0;
 static volatile int		reverbTenths = 20;
 static volatile bool	reverbAllowed = true;
 static volatile int		spatialPct = 0;
+static volatile int		crushBits = EFFECTS_BITS_OFF;
+static volatile int		crushRate = EFFECTS_RATE_OFF;
+
+/* The song being played (effectsStart) */
+static unsigned			rate = 44100;
+static int				channels = 2;
 
 static int clampInt(int v, int lo, int hi)
 {
@@ -59,9 +65,29 @@ int effectsReverbTime(void)
 	return reverbTenths;
 }
 
+void effectsSetBitDepth(int bits)
+{
+	crushBits = clampInt(bits, EFFECTS_BITS_MIN, EFFECTS_BITS_OFF);
+}
+
+int effectsBitDepth(void)
+{
+	return crushBits;
+}
+
+void effectsSetSampleRate(int hz)
+{
+	crushRate = clampInt(hz, EFFECTS_RATE_MIN, EFFECTS_RATE_OFF);
+}
+
+int effectsSampleRate(void)
+{
+	return crushRate;
+}
+
 void effectsSetSpatial(int pct)
 {
-	spatialPct = clampInt(pct, 0, EFFECTS_SPATIAL_MAX);
+	spatialPct = clampInt(pct, 0, EFFECTS_SPATIAL_CUSTOM_MAX);
 }
 
 int effectsSpatial(void)
@@ -135,6 +161,58 @@ static void distProcess(int16_t* s, size_t n)
 }
 
 /* ------------------------------------------------------------------ */
+/* Bitcrush                                                            */
+/* ------------------------------------------------------------------ */
+
+static unsigned	crushPhase;
+static int16_t	crushHeld[2];
+
+/* Round to the nearest multiple of 2^shift (so 0 stays 0 and silence
+ * stays silent), clipped back into 16 bits. Offset by 32768 so only
+ * non-negative values are shifted (2^shift divides it, so the rounding is
+ * the same). */
+static inline int16_t quantize(int32_t x, int shift)
+{
+	uint32_t u;
+	int32_t v;
+
+	if(shift == 0)
+		return (int16_t)x;
+	u = (uint32_t)(x + 32768 + (1 << (shift - 1)));
+	v = (int32_t)((u >> shift) << shift) - 32768;
+	return v > 32767 ? 32767 : (int16_t)v;
+}
+
+/* bits < 16 rounds the samples; target < the song's rate holds each one
+ * until the next is due: `crushPhase` counts target-rate ticks against
+ * the song's rate (integers, no drift). */
+static void crushProcess(int16_t* s, size_t frames, int bits, int target)
+{
+	int			shift = bits >= 16 ? 0 : 16 - bits;
+	bool		hold = target < (int)rate;
+	unsigned	r = rate;
+
+	for(size_t i = 0; i < frames; i++, s += channels)
+	{
+		bool update = true;
+
+		if(hold)
+		{
+			crushPhase += (unsigned)target;
+			if(crushPhase >= r)
+				crushPhase -= r;
+			else
+				update = false;
+		}
+		if(update)
+			for(int ch = 0; ch < channels; ch++)
+				crushHeld[ch] = quantize(s[ch], shift);
+		for(int ch = 0; ch < channels; ch++)
+			s[ch] = crushHeld[ch];
+	}
+}
+
+/* ------------------------------------------------------------------ */
 /* Reverb                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -175,8 +253,6 @@ static struct comb	combs[2][NUM_COMBS];
 static struct line	allpasses[2][NUM_ALLPASS];
 static float*		rvMem = NULL;
 static unsigned		rvMemRate = 0;		/* rate the buffers are sized for */
-static unsigned		rate = 44100;
-static int			channels = 2;
 static int			rvCoeffsFor = -1;	/* reverbTenths of the coefficients */
 static bool			rvDirty = true;		/* buffers need clearing */
 static bool			rvWasOn = false;
@@ -402,8 +478,8 @@ static void spatialProcess(int16_t* s, size_t frames, int pct)
 
 	for(size_t i = 0; i < frames; i++, s += 2)
 	{
-		/* Q12 gains (mid <= 1, side <= 3.3 at any setting): |sum| stays
-		 * under 1.3e9, inside int32 */
+		/* Q12 gains (mid <= 1, side <= 3.3 at any setting, also up to
+		 * 1000%): |sum| stays under 1.3e9, inside int32 */
 		int32_t	m = s[0] + s[1];
 		int32_t	d = s[0] - s[1];
 		int32_t	gm = spMid >> 4;
@@ -429,6 +505,8 @@ void effectsStart(unsigned r, int ch)
 	rvDirty = true;
 	rvWasOn = false;
 	spMid = spSide = SP_ONE;
+	crushPhase = rate - 1;		/* the first frame is taken */
+	crushHeld[0] = crushHeld[1] = 0;
 }
 
 void effectsProcess(int16_t* samples, size_t frames)
@@ -441,6 +519,14 @@ void effectsProcess(int16_t* samples, size_t frames)
 		if(dist != distTableFor)
 			distBuild(dist);
 		distProcess(samples, frames * (size_t)channels);
+	}
+
+	{
+		int bits = crushBits;
+		int hz = crushRate;
+
+		if(bits < 16 || (hz < EFFECTS_RATE_OFF && hz < (int)rate))
+			crushProcess(samples, frames, bits, hz);
 	}
 
 	if(mix > 0 && rvAlloc())

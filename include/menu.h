@@ -22,6 +22,7 @@ struct menu
 	int	scroll;		/* screen rows the page is scrolled up by */
 	bool	picking;	/* the theme picker is open (Menu > Themes) */
 	int		themeOrig;	/* theme in use when the picker opened */
+	int		entry;		/* effect slider Y was pressed on (valueentry.h) */
 };
 
 /** Open the menu on its main page and draw it. */
@@ -42,13 +43,19 @@ enum menu_result
 	MENU_CLOSED,	/* closed; the browser has been redrawn */
 	MENU_QUIT,		/* "Exit Papaya" was chosen */
 	MENU_QUEUE,		/* open the queue editor (the menu stays hidden) */
-	MENU_SEARCH		/* open search */
+	MENU_SEARCH,	/* open search */
+	MENU_VALUE		/* open the value entry page (menuValueTarget) */
 };
+
+/** Which effect the value entry should edit after MENU_VALUE (an
+ * enum valueTarget from valueentry.h). */
+int menuValueTarget(const struct menu* m);
 
 /**
  * Handle one frame of input while the menu is open: Up/Down select,
  * Left/Right change, A activates, B goes back/closes, SELECT closes,
- * the stylus selects rows and drags sliders. main.c handles the playback
+ * Y on an effect slider asks for a typed value (MENU_VALUE), the stylus
+ * selects rows and drags sliders. main.c handles the playback
  * keys first, so they work in the menu too. Hide the browser
  * (browserSetVisible) before opening; closing shows it again.
  */

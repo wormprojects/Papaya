@@ -106,6 +106,8 @@ struct npView
 	char			format[8];
 	float			speed;
 	int				distortionPct;		/* 0: off */
+	int				bitDepth;			/* 16 or more: off */
+	int				sampleRate;			/* Hz, 32000 or more: off */
 	int				spatialPct;			/* 0: off */
 	int				reverbMixPct;		/* 0: off */
 	float			reverbDecay;		/* seconds */
