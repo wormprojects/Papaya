@@ -44,7 +44,8 @@ enum menu_result
 	MENU_QUIT,		/* "Exit Papaya" was chosen */
 	MENU_QUEUE,		/* open the queue editor (the menu stays hidden) */
 	MENU_SEARCH,	/* open search */
-	MENU_VALUE		/* open the value entry page (menuValueTarget) */
+	MENU_VALUE,		/* open the value entry page (menuValueTarget) */
+	MENU_EQ			/* open the equalizer page */
 };
 
 /** Which effect the value entry should edit after MENU_VALUE (an

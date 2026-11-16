@@ -9,6 +9,9 @@
  * D-pad snaps to the neighbouring step in that direction (0.99x, Right ->
  * 1.0x), see menu.c.
  *
+ * The equalizer's targets (dB) also take a leading '-'. They are opened from
+ * the equalizer page (eqedit.c), and go back to it, not to the menu.
+ *
  * The playback keys keep working, like on every page.
  */
 
@@ -18,6 +21,7 @@
 #include <3ds.h>
 #include <stdbool.h>
 
+#include "effects.h"
 #include "page.h"
 
 /* What a typed value goes to (the menu's effect sliders) */
@@ -30,7 +34,9 @@ enum valueTarget
 	VT_SPATIAL,
 	VT_REVERB,
 	VT_REVERB_TIME,
-	VT_COUNT
+	VT_EQ_PRE,
+	VT_EQ_BAND0,					/* + the band (0..EFFECTS_EQ_BANDS-1) */
+	VT_COUNT = VT_EQ_BAND0 + EFFECTS_EQ_BANDS
 };
 
 #define VALUE_TEXT_MAX	8

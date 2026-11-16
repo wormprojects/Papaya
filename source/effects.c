@@ -1,6 +1,7 @@
 /**
  * ctrmus - 3DS Music Player
- * Distortion, bitcrush, reverb and spatial widening. See effects.h.
+ * Equalizer, distortion, bitcrush, reverb and spatial widening. See
+ * effects.h.
  */
 
 #include <math.h>
@@ -24,6 +25,9 @@ static volatile bool	reverbAllowed = true;
 static volatile int		spatialPct = 0;
 static volatile int		crushBits = EFFECTS_BITS_OFF;
 static volatile int		crushRate = EFFECTS_RATE_OFF;
+static volatile int		eqGain[EFFECTS_EQ_BANDS];	/* tenths of a dB */
+static volatile int		eqPre = 0;					/* tenths of a dB */
+static volatile int		eqVersion = 0;				/* bumped on any change */
 
 /* The song being played (effectsStart) */
 static unsigned			rate = 44100;
@@ -103,6 +107,105 @@ void effectsSetReverbAllowed(bool allowed)
 int effectsReverbActiveMix(void)
 {
 	return reverbAllowed ? reverbMixPct : 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Equalizer settings and presets                                      */
+/* ------------------------------------------------------------------ */
+
+static const int eqFreq[EFFECTS_EQ_BANDS] =
+	{ 31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000 };
+
+#define EQ_Q			1.41f	/* about one octave wide */
+#define EQ_NYQUIST_FRAC	0.45f	/* bands above this part of the rate are off */
+
+struct eqPreset
+{
+	const char*	name;
+	signed char	db[EFFECTS_EQ_BANDS];
+};
+
+static const struct eqPreset eqPresets[] =
+{
+	{ "flat",         {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0 } },
+	{ "bass boost",   {  8,  7,  5,  2,  0,  0,  0,  0,  0,  0 } },
+	{ "treble boost", {  0,  0,  0,  0,  0,  0,  2,  4,  6,  7 } },
+	{ "vocal",        { -3, -3, -2,  0,  2,  4,  4,  3,  0, -2 } },
+	{ "loudness",     {  6,  5,  3,  0, -1, -1,  0,  2,  4,  5 } },
+};
+#define EQ_PRESETS	((int)(sizeof(eqPresets) / sizeof(eqPresets[0])))
+
+void effectsSetEqBand(int band, int tenths)
+{
+	if(band < 0 || band >= EFFECTS_EQ_BANDS)
+		return;
+	eqGain[band] = clampInt(tenths, -EFFECTS_EQ_BAND_MAX,
+	                        EFFECTS_EQ_BAND_MAX);
+	eqVersion++;
+}
+
+int effectsEqBand(int band)
+{
+	return band < 0 || band >= EFFECTS_EQ_BANDS ? 0 : eqGain[band];
+}
+
+void effectsSetEqPreamp(int tenths)
+{
+	eqPre = clampInt(tenths, EFFECTS_EQ_PREAMP_MIN, 0);
+	eqVersion++;
+}
+
+int effectsEqPreamp(void)
+{
+	return eqPre;
+}
+
+int effectsEqFreq(int band)
+{
+	return band < 0 || band >= EFFECTS_EQ_BANDS ? 0 : eqFreq[band];
+}
+
+bool effectsEqActive(void)
+{
+	if(eqPre != 0)
+		return true;
+	for(int i = 0; i < EFFECTS_EQ_BANDS; i++)
+		if(eqGain[i] != 0)
+			return true;
+	return false;
+}
+
+void effectsEqReset(void)
+{
+	for(int i = 0; i < EFFECTS_EQ_BANDS; i++)
+		eqGain[i] = 0;
+	eqPre = 0;
+	eqVersion++;
+}
+
+int effectsEqPresetCount(void)
+{
+	return EQ_PRESETS;
+}
+
+const char* effectsEqPresetName(int preset)
+{
+	return preset < 0 || preset >= EQ_PRESETS ? "custom" :
+	       eqPresets[preset].name;
+}
+
+int effectsEqCurrentPreset(void)
+{
+	for(int p = 0; p < EQ_PRESETS; p++)
+	{
+		bool same = true;
+
+		for(int i = 0; i < EFFECTS_EQ_BANDS && same; i++)
+			same = eqGain[i] == eqPresets[p].db[i] * 10;
+		if(same)
+			return p;
+	}
+	return -1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -447,6 +550,159 @@ static void rvProcess(int16_t* s, size_t frames, int mixPct)
 }
 
 /* ------------------------------------------------------------------ */
+/* Equalizer                                                           */
+/* ------------------------------------------------------------------ */
+
+struct biquad
+{
+	float	b0, b1, b2, a1, a2;		/* normalised (a0 = 1) */
+};
+
+static struct biquad	eqCoef[EFFECTS_EQ_BANDS];
+static float			eqState[2][EFFECTS_EQ_BANDS][2];
+static int				eqActive[EFFECTS_EQ_BANDS];	/* indexes in use */
+static int				eqActiveCount = 0;
+static int				eqCoefVersion = -1;			/* eqVersion of the above */
+static float			eqPreCur = 1.0f;			/* preamp now (linear) */
+
+/* RBJ cookbook peaking filter. */
+static void eqDesign(struct biquad* q, int hz, int tenths, unsigned fs)
+{
+	float	a = powf(10.0f, tenths / 400.0f);			/* 10^(dB/40) */
+	float	w = 2.0f * (float)M_PI * (float)hz / (float)fs;
+	float	alpha = sinf(w) / (2.0f * EQ_Q);
+	float	cw = cosf(w);
+	float	a0 = 1.0f + alpha / a;
+
+	q->b0 = (1.0f + alpha * a) / a0;
+	q->b1 = -2.0f * cw / a0;
+	q->b2 = (1.0f - alpha * a) / a0;
+	q->a1 = -2.0f * cw / a0;
+	q->a2 = (1.0f - alpha / a) / a0;
+}
+
+/* A band is used if it's off 0 dB and below the song's Nyquist frequency. */
+static bool eqUsable(int band, unsigned fs)
+{
+	return eqGain[band] != 0 &&
+	       (float)eqFreq[band] < EQ_NYQUIST_FRAC * (float)fs;
+}
+
+/* Rework the coefficients after a change. States of bands that go off
+ * are cleared, so they start clean when they come back. */
+static void eqUpdate(void)
+{
+	int v = eqVersion;
+
+	eqActiveCount = 0;
+	for(int b = 0; b < EFFECTS_EQ_BANDS; b++)
+	{
+		if(eqUsable(b, rate))
+		{
+			eqDesign(&eqCoef[b], eqFreq[b], eqGain[b], rate);
+			eqActive[eqActiveCount++] = b;
+		}
+		else
+			for(int ch = 0; ch < 2; ch++)
+				eqState[ch][b][0] = eqState[ch][b][1] = 0.0f;
+	}
+	eqCoefVersion = v;
+}
+
+static void eqProcess(int16_t* s, size_t frames)
+{
+	float	target = powf(10.0f, eqPre / 200.0f);		/* 10^(dB/20) */
+	float	step = (target - eqPreCur) / (float)(frames > 0 ? frames : 1);
+	float	pre = eqPreCur;
+
+	if(eqCoefVersion != eqVersion)
+		eqUpdate();
+
+	for(size_t i = 0; i < frames; i++, s += channels)
+	{
+		pre += step;
+		for(int ch = 0; ch < channels; ch++)
+		{
+			float x = (float)s[ch] * pre + ANTI_DENORMAL;
+
+			for(int k = 0; k < eqActiveCount; k++)
+			{
+				const struct biquad*	q = &eqCoef[eqActive[k]];
+				float*					z = eqState[ch][eqActive[k]];
+				float					y = q->b0 * x + z[0];
+
+				z[0] = q->b1 * x - q->a1 * y + z[1];
+				z[1] = q->b2 * x - q->a2 * y;
+				x = y;
+			}
+			s[ch] = sat16(x);
+		}
+	}
+	eqPreCur = target;
+}
+
+/* Gain (dB) of the bands together at `hz`, at sample rate `fs`. */
+static float eqResponseDb(int hz, unsigned fs)
+{
+	float	w = 2.0f * (float)M_PI * (float)hz / (float)fs;
+	float	c1 = cosf(w), s1 = sinf(w), c2 = cosf(2.0f * w),
+	        s2 = sinf(2.0f * w);
+	float	db = 0.0f;
+
+	for(int b = 0; b < EFFECTS_EQ_BANDS; b++)
+	{
+		struct biquad	q;
+		float			nr, ni, dr, di;
+
+		if(!eqUsable(b, fs))
+			continue;
+		eqDesign(&q, eqFreq[b], eqGain[b], fs);
+		nr = q.b0 + q.b1 * c1 + q.b2 * c2;
+		ni = -(q.b1 * s1 + q.b2 * s2);
+		dr = 1.0f + q.a1 * c1 + q.a2 * c2;
+		di = -(q.a1 * s1 + q.a2 * s2);
+		db += 10.0f * log10f((nr * nr + ni * ni) / (dr * dr + di * di));
+	}
+	return db;
+}
+
+int effectsEqPeak(void)
+{
+	/* The song's rate if one is playing, else CD rate; 20 Hz up to just
+	 * below the highest usable frequency. */
+	unsigned	fs = rate > 0 ? rate : 44100;
+	float		hi = EQ_NYQUIST_FRAC * (float)fs;
+	float		peak = 0.0f;
+
+	for(int i = 0; i <= 120; i++)
+	{
+		float	hz = 20.0f * powf(hi / 20.0f, i / 120.0f);
+		float	db = eqResponseDb((int)hz, fs);
+
+		if(db > peak)
+			peak = db;
+	}
+	return (int)lrintf(peak * 10.0f);
+}
+
+void effectsEqAutoPreamp(void)
+{
+	int peak = effectsEqPeak();
+
+	effectsSetEqPreamp(-((peak + 9) / 10) * 10);	/* whole dB, rounded up */
+}
+
+void effectsEqApplyPreset(int preset)
+{
+	if(preset < 0 || preset >= EQ_PRESETS)
+		return;
+	for(int i = 0; i < EFFECTS_EQ_BANDS; i++)
+		eqGain[i] = eqPresets[preset].db[i] * 10;
+	eqVersion++;
+	effectsEqAutoPreamp();
+}
+
+/* ------------------------------------------------------------------ */
 /* Spatial widening                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -507,12 +763,20 @@ void effectsStart(unsigned r, int ch)
 	spMid = spSide = SP_ONE;
 	crushPhase = rate - 1;		/* the first frame is taken */
 	crushHeld[0] = crushHeld[1] = 0;
+	memset(eqState, 0, sizeof(eqState));
+	eqCoefVersion = -1;				/* new rate: new coefficients */
+	eqPreCur = powf(10.0f, eqPre / 200.0f);
 }
 
 void effectsProcess(int16_t* samples, size_t frames)
 {
 	int dist = distortionPct;
 	int mix = effectsReverbActiveMix();
+
+	/* Nothing to do when flat and settled (a preamp just put back to 0
+	 * still ramps once). */
+	if(eqPre != 0 || eqPreCur != 1.0f || effectsEqActive())
+		eqProcess(samples, frames);
 
 	if(dist > 0)
 	{

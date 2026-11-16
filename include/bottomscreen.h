@@ -185,18 +185,60 @@ struct veView
 	const char*		range;			/* e.g. "0.1x - 3.0x" */
 	const char*		result;			/* what it would be set to, or NULL */
 	bool			allowDot;		/* decimals can be typed */
+	bool			allowMinus;		/* a leading '-' can be typed */
 	bool			caret;			/* caret visible (blinks) */
 	int				keyRow, keyCol;	/* keyboard cursor */
 	int				pressedKey;		/* key code held by the stylus, or -1 */
 };
 
-/** Same keyboard as search; only digits (and '.' if allowed), del, clr
- * and done work, the rest is drawn dim. */
+/** Same keyboard as search; only digits (and '.' / '-' if allowed), del,
+ * clr and done work, the rest is drawn dim. */
 void veDraw(struct botCanvas* c, const struct topColors* col,
             const struct veView* v);
 
 /** Move the keyboard cursor by (dx, dy), wrapping; Left/Right skip over
  * the rest of a wide key. */
 void ssKeyMove(int* row, int* col, int dx, int dy);
+
+/* ------------------------------------------------------------------ */
+/* Equalizer (Menu > Effects > Equalizer...)                           */
+/* ------------------------------------------------------------------ */
+
+#define EQ_BANDS		10
+#define EQ_COLUMNS		(EQ_BANDS + 1)		/* the preamp, then the bands */
+/* Focus: a column (0 = preamp, 1.. = bands) or one of the buttons */
+#define EQ_FOCUS_PRESET		EQ_COLUMNS
+#define EQ_FOCUS_AUTO		(EQ_COLUMNS + 1)
+#define EQ_FOCUS_FLAT		(EQ_COLUMNS + 2)
+#define EQ_FOCUS_COUNT		(EQ_COLUMNS + 3)
+
+struct eqView
+{
+	int				focus;				/* EQ_FOCUS_* / column */
+	int				pre;				/* preamp, tenths of a dB (<= 0) */
+	int				band[EQ_BANDS];		/* tenths of a dB */
+	int				freq[EQ_BANDS];		/* Hz */
+	int				bandMax;			/* band range: +-bandMax tenths */
+	int				preMin;				/* preamp range: preMin..0 tenths */
+	int				netPeak;			/* loudest boost + preamp, tenths */
+	const char*		preset;				/* preset name, or "custom" */
+	int				pressed;			/* button held by the stylus, or -1 */
+};
+
+void eqDraw(struct botCanvas* c, const struct topColors* col,
+            const struct eqView* v);
+
+/** Column (0..EQ_COLUMNS-1) under the stylus, or -1. */
+int eqColumnAt(int x, int y);
+
+/** Column nearest to x even outside the columns (for dragging). */
+int eqColumnAtClamped(int x);
+
+/** The value a stylus at height y gives column `col`: whole dB, in tenths,
+ * limited to the column's range. */
+int eqValueAt(const struct eqView* v, int col, int y);
+
+/** Button (EQ_FOCUS_PRESET..) under the stylus, or -1. */
+int eqButtonAt(int x, int y);
 
 #endif

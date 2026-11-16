@@ -109,6 +109,7 @@ struct npView
 	int				bitDepth;			/* 16 or more: off */
 	int				sampleRate;			/* Hz, 32000 or more: off */
 	int				spatialPct;			/* 0: off */
+	char			eq[16];				/* "off", a preset name, "pre -6 dB" */
 	int				reverbMixPct;		/* 0: off */
 	float			reverbDecay;		/* seconds */
 

@@ -26,6 +26,7 @@
 #include "brightness.h"
 #include "browser.h"
 #include "effects.h"
+#include "eqedit.h"
 #include "coverart.h"
 #include "menu.h"
 #include "metaloader.h"
@@ -47,13 +48,15 @@ enum app_state
 	STATE_MENU,
 	STATE_QUEUE,	/* queue editor */
 	STATE_SEARCH,
-	STATE_VALUE		/* typing an exact effect value */
+	STATE_VALUE,	/* typing an exact effect value */
+	STATE_EQ		/* the equalizer */
 };
 
 /* The pages (one open at a time) */
 static struct queueEdit	queueEditor;
 static struct search	search;
 static struct valueEntry	valueEntry;
+static struct eqEdit		eqEditor;
 
 /* Held-direction auto-repeat delay for browser navigation (ms). */
 #define KEY_REPEAT_DELAY_MS		500
@@ -274,6 +277,7 @@ int main(int argc, char **argv)
 	struct menu		menu;
 	struct theme_t	theme;
 	bool			mcuAvailable = false;
+	bool			valueFromEq = false;	/* the value entry came from the EQ */
 	enum app_state	appState = STATE_SPLASH;
 
 	/* ignore key release of L/R if L+R or L+down was pressed */
@@ -404,9 +408,35 @@ int main(int argc, char **argv)
 		}
 		else if(appState == STATE_VALUE)
 		{
-			/* Done or cancelled: back to the menu (it redraws its
-			 * values, and the top screen was told to redraw). */
+			/* Done or cancelled: back to where it was opened from (it
+			 * redraws its values, and the top screen was told to
+			 * redraw). */
 			if(valueEntryInput(&valueEntry, kDown, kHeld) != PAGE_STAY)
+			{
+				if(valueFromEq)
+				{
+					appState = STATE_EQ;
+					eqEditResume(&eqEditor);
+				}
+				else
+				{
+					appState = STATE_MENU;
+					menuResume(&menu, &screens);
+				}
+			}
+		}
+		else if(appState == STATE_EQ)
+		{
+			enum page_result r = eqEditInput(&eqEditor, kDown, kHeld);
+
+			if(r == PAGE_VALUE)
+			{
+				valueEntryOpen(&valueEntry,
+				               (enum valueTarget)eqEditValueTarget(&eqEditor));
+				valueFromEq = true;
+				appState = STATE_VALUE;
+			}
+			else if(r != PAGE_STAY)
 			{
 				appState = STATE_MENU;
 				menuResume(&menu, &screens);
@@ -445,7 +475,13 @@ int main(int argc, char **argv)
 			{
 				valueEntryOpen(&valueEntry,
 				               (enum valueTarget)menuValueTarget(&menu));
+				valueFromEq = false;
 				appState = STATE_VALUE;
+			}
+			if(r == MENU_EQ)
+			{
+				eqEditOpen(&eqEditor);
+				appState = STATE_EQ;
 			}
 		}
 		else
@@ -469,6 +505,8 @@ int main(int argc, char **argv)
 			searchUpdate(&search);
 		else if(appState == STATE_VALUE)
 			valueEntryUpdate(&valueEntry);
+		else if(appState == STATE_EQ)
+			eqEditUpdate(&eqEditor);
 
 		/* The "p>" line and the queue button on the bottom screen. */
 		browserSetPlaylistDir(&browser, playerPlaylistDir());

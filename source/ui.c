@@ -359,6 +359,24 @@ static void buildView(struct npView* v)
 	v->bitDepth = effectsBitDepth();
 	v->sampleRate = effectsSampleRate();
 	v->spatialPct = effectsSpatial();
+	if(!effectsEqActive())
+		snprintf(v->eq, sizeof(v->eq), "off");
+	else
+	{
+		int preset = effectsEqCurrentPreset();
+
+		if(preset > 0)
+			snprintf(v->eq, sizeof(v->eq), "%s", effectsEqPresetName(preset));
+		else if(preset == 0)		/* bands flat, so the preamp is on */
+		{
+			char db[24];
+
+			effectsFormatDb(db, sizeof(db), effectsEqPreamp());
+			snprintf(v->eq, sizeof(v->eq), "pre %.11s", db);
+		}
+		else
+			snprintf(v->eq, sizeof(v->eq), "custom");
+	}
 	v->reverbMixPct = effectsReverbActiveMix();
 	v->reverbDecay = effectsReverbTime() / 10.0f;
 

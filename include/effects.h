@@ -1,8 +1,19 @@
 /**
  * ctrmus - 3DS Music Player
  * Audio effects applied to the decoded samples on the playback thread,
- * before they go to the DSP: distortion, then reverb (like pedals in that
- * order), with bitcrush after the distortion and spatial widening last.
+ * before they go to the DSP: equalizer first, then distortion, then reverb
+ * (like pedals in that order), with bitcrush after the distortion and
+ * spatial widening last.
+ *
+ * - Equalizer: a preamp (0 to -30 dB, set by hand: lower it by as much as
+ *   the bands boost and the sound can't clip, then raise the 3DS volume)
+ *   and 10 bands (31 Hz to 16 kHz, one octave apart), each -18 to +18 dB,
+ *   as peaking biquads (Q 1.41) in floats. Values are in tenths of a dB.
+ *   Bands at 0 dB are skipped completely, and with everything flat the
+ *   equalizer costs nothing. Bands too close to the song's Nyquist
+ *   frequency are skipped. Coefficients are worked out on the playback
+ *   thread when a value changes; the preamp ramps across the buffer.
+ *   First in the chain, so a bass boost drives the distortion.
  *
  * - Distortion: a tanh soft clipper. The intensity (0-100%) sets the drive
  *   (1x to 30x, exponential so the steps sound even), with make-up gain so
@@ -70,6 +81,47 @@ int effectsSampleRate(void);
 
 void effectsSetSpatial(int pct);		/* 0 = off .. EFFECTS_SPATIAL_CUSTOM_MAX */
 int effectsSpatial(void);
+
+/* Equalizer (tenths of a dB) */
+#define EFFECTS_EQ_BANDS			10
+#define EFFECTS_EQ_BAND_MAX			180		/* bands: -180 .. +180 */
+#define EFFECTS_EQ_PREAMP_MIN		(-300)	/* preamp: -300 .. 0 */
+
+void effectsSetEqBand(int band, int tenths);	/* 0 .. EFFECTS_EQ_BANDS-1 */
+int effectsEqBand(int band);
+void effectsSetEqPreamp(int tenths);
+int effectsEqPreamp(void);
+int effectsEqFreq(int band);			/* Hz */
+/** True if the equalizer changes anything (a band or the preamp is off 0). */
+bool effectsEqActive(void);
+/** How far the bands lift the loudest frequency, in tenths of a dB (0 if
+ * they don't lift anything). The preamp has to be at least this far down
+ * for a full-scale tone not to clip. */
+int effectsEqPeak(void);
+/** Preamp = minus the peak, rounded up to a whole dB. */
+void effectsEqAutoPreamp(void);
+/** All bands and the preamp back to 0. */
+void effectsEqReset(void);
+int effectsEqPresetCount(void);
+const char* effectsEqPresetName(int preset);
+/** Sets the bands, and the preamp to match (effectsEqAutoPreamp). */
+void effectsEqApplyPreset(int preset);
+/** The preset the bands match now (the preamp doesn't count), or -1. */
+int effectsEqCurrentPreset(void);
+
+/** "+3 dB", "-18 dB", "+2.5 dB" (tenths of a dB). */
+static inline void effectsFormatDb(char* buf, size_t len, int tenths)
+{
+	int a = tenths < 0 ? -tenths : tenths;
+
+	if(a % 10 == 0)
+		snprintf(buf, len, "%s%d dB", tenths < 0 ? "-" : tenths > 0 ? "+" : "",
+		         a / 10);
+	else
+		snprintf(buf, len, "%s%d.%d dB", tenths < 0 ? "-" : "+", a / 10,
+		         a % 10);
+}
+
 /** false forces the reverb off (performance mode) without changing the
  * mix setting. */
 void effectsSetReverbAllowed(bool allowed);

@@ -24,7 +24,7 @@ struct target
 	int			decimals;	/* digits after the point that are kept */
 };
 
-static const struct target targets[VT_COUNT] =
+static const struct target targets[VT_EQ_PRE + 1] =
 {
 	{ "speed", "x", 0.1, 3.0, 2 },
 	{ "distortion", "%", 0.0, 100.0, 0 },
@@ -34,7 +34,41 @@ static const struct target targets[VT_COUNT] =
 	{ "reverb mix", "%", 0.0, 100.0, 0 },
 	{ "reverb time", "s", EFFECTS_REVERB_TIME_MIN / 10.0,
 	  EFFECTS_REVERB_TIME_MAX / 10.0, 1 },
+	{ "eq preamp", "dB", EFFECTS_EQ_PREAMP_MIN / 10.0, 0.0, 1 },
 };
+
+static bool isEqBand(enum valueTarget t)
+{
+	return t >= VT_EQ_BAND0 && t < VT_COUNT;
+}
+
+static bool isDb(enum valueTarget t)
+{
+	return t == VT_EQ_PRE || isEqBand(t);
+}
+
+/* The target of `t`; an equalizer band's is made up (name from its
+ * frequency). */
+static const struct target* targetOf(enum valueTarget t)
+{
+	static struct target	band;
+	static char				name[24];
+	int						hz;
+
+	if(!isEqBand(t))
+		return &targets[t];
+	hz = effectsEqFreq(t - VT_EQ_BAND0);
+	if(hz >= 1000)
+		snprintf(name, sizeof(name), "eq %d kHz", hz / 1000);
+	else
+		snprintf(name, sizeof(name), "eq %d Hz", hz);
+	band.name = name;
+	band.unit = "dB";
+	band.min = -EFFECTS_EQ_BAND_MAX / 10.0;
+	band.max = EFFECTS_EQ_BAND_MAX / 10.0;
+	band.decimals = 1;
+	return &band;
+}
 
 static double currentValue(enum valueTarget t)
 {
@@ -47,7 +81,9 @@ static double currentValue(enum valueTarget t)
 		case VT_SPATIAL:		return effectsSpatial();
 		case VT_REVERB:			return effectsReverbMix();
 		case VT_REVERB_TIME:	return effectsReverbTime() / 10.0;
-		default:				return 0.0;
+		case VT_EQ_PRE:			return effectsEqPreamp() / 10.0;
+		default:
+			return isEqBand(t) ? effectsEqBand(t - VT_EQ_BAND0) / 10.0 : 0.0;
 	}
 }
 
@@ -63,7 +99,11 @@ static void applyValue(enum valueTarget t, double v)
 		case VT_REVERB:			effectsSetReverbMix((int)lrint(v)); break;
 		case VT_REVERB_TIME:	effectsSetReverbTime((int)lrint(v * 10.0));
 								break;
-		default:				break;
+		case VT_EQ_PRE:			effectsSetEqPreamp((int)lrint(v * 10.0)); break;
+		default:
+			if(isEqBand(t))
+				effectsSetEqBand(t - VT_EQ_BAND0, (int)lrint(v * 10.0));
+			break;
 	}
 }
 
@@ -89,6 +129,8 @@ static void format(enum valueTarget t, double v, char* buf, size_t len)
 		snprintf(buf, len, "%d bit", (int)lrint(v));
 	else if(t == VT_SAMPLERATE)
 		effectsFormatRate(buf, len, (int)lrint(v));
+	else if(isDb(t))
+		effectsFormatDb(buf, len, (int)lrint(v * 10.0));
 	else
 		snprintf(buf, len, "%d%%", (int)lrint(v));
 }
@@ -107,12 +149,27 @@ void valueEntryOpen(struct valueEntry* s, enum valueTarget what)
 
 static bool allowDot(const struct valueEntry* s)
 {
-	return targets[s->what].decimals > 0;
+	return targetOf(s->what)->decimals > 0;
+}
+
+/* dB can be negative */
+static bool allowMinus(const struct valueEntry* s)
+{
+	return targetOf(s->what)->min < 0.0;
+}
+
+/* "-" or "." alone isn't a number yet. */
+static bool hasDigit(const char* text)
+{
+	for(; *text != '\0'; text++)
+		if(*text >= '0' && *text <= '9')
+			return true;
+	return false;
 }
 
 static void draw(struct valueEntry* s)
 {
-	const struct target*	t = &targets[s->what];
+	const struct target*	t = targetOf(s->what);
 	struct veView			v;
 	struct botCanvas		c;
 	struct topColors		col;
@@ -125,7 +182,7 @@ static void draw(struct valueEntry* s)
 	format(s->what, t->max, hi, sizeof(hi));
 	snprintf(range, sizeof(range), "%s - %s", lo, hi);
 
-	if(s->text[0] != '\0')
+	if(hasDigit(s->text))
 	{
 		double raw = strtod(s->text, NULL);
 		double val = quantize(t, raw);
@@ -143,6 +200,7 @@ static void draw(struct valueEntry* s)
 	v.now = now;
 	v.range = range;
 	v.allowDot = allowDot(s);
+	v.allowMinus = allowMinus(s);
 	v.caret = s->caret;
 	v.keyRow = s->keyRow;
 	v.keyCol = s->keyCol;
@@ -171,9 +229,9 @@ void valueEntryUpdate(struct valueEntry* s)
 /* Set what was typed (nothing typed: nothing changes). */
 static enum page_result finish(struct valueEntry* s, bool apply)
 {
-	if(apply && s->text[0] != '\0')
+	if(apply && hasDigit(s->text))
 	{
-		applyValue(s->what, quantize(&targets[s->what],
+		applyValue(s->what, quantize(targetOf(s->what),
 		                             strtod(s->text, NULL)));
 		uiRequestRedraw();		/* the top screen shows it */
 	}
@@ -196,7 +254,8 @@ static void pressKey(struct valueEntry* s, int code)
 			return;
 		s->text[0] = '\0';
 	}
-	else if((code >= '0' && code <= '9') || (code == '.' && allowDot(s)))
+	else if((code >= '0' && code <= '9') || (code == '.' && allowDot(s)) ||
+	        (code == '-' && allowMinus(s) && len == 0))
 	{
 		if(len >= VALUE_TEXT_MAX)
 			return;

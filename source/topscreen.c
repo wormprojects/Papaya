@@ -950,6 +950,7 @@ static void drawRightColumn(struct topCanvas* c, const struct topColors* col,
 
 	effectsFormatSpeed(buf, sizeof(buf), v->speed);
 	y = field(c, col, x, y, "speed:", buf, 1);
+	y = field(c, col, x, y, "eq:", v->eq[0] != '\0' ? v->eq : "off", 1);
 	if(v->distortionPct > 0)
 		snprintf(buf, sizeof(buf), "%d%%", v->distortionPct);
 	else

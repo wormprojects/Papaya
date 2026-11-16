@@ -72,6 +72,7 @@ enum item_id
 	IT_SEARCH,
 	IT_REFRESH,
 	IT_EXIT,
+	IT_EQ,
 	IT_SPEED,
 	IT_DISTORTION,
 	IT_BITDEPTH,
@@ -126,7 +127,7 @@ static const struct item mainItems[] =
 	{ K_ITEM, IT_REPEAT, "Repeat", "Off, the whole playlist, or one song." },
 	{ K_ITEM, IT_QUEUE, "Queue...", "Play, move or remove queued songs." },
 	{ K_ITEM, IT_SEARCH, "Search...", "Filenames here and in subfolders." },
-	{ K_ITEM, IT_EFFECTS, "Effects...", "Speed, distortion, bitcrush, spatial." },
+	{ K_ITEM, IT_EFFECTS, "Effects...", "Equalizer, speed, distortion, bitcrush..." },
 	{ K_HEADER, IT_NONE, "DISPLAY", NULL },
 	{ K_ITEM, IT_THEME, "Theme", "A: pick from a list. </>: cycle." },
 	{ K_ITEM, IT_THEME_EDIT, "Edit theme...",
@@ -160,6 +161,8 @@ static const struct item mainItems[] =
 
 static const struct item effectsItems[] =
 {
+	{ K_ITEM, IT_EQ, "Equalizer...",
+	  "10 bands and a preamp (so it won't clip)." },
 	{ K_SLIDER, IT_SPEED, "Speed", "Changes pitch. A: 1.0x. Y: type value." },
 	{ K_SLIDER, IT_DISTORTION, "Distortion",
 	  "Soft clip. A: off. Y: type a value." },
@@ -532,6 +535,13 @@ static void valueText(enum item_id id, char* buf, size_t len)
 			break;
 		case IT_SEARCH:
 			snprintf(buf, len, ">");
+			break;
+		case IT_EQ:
+			if(!effectsEqActive())
+				snprintf(buf, len, "off >");
+			else
+				snprintf(buf, len, "%s >",
+				         effectsEqPresetName(effectsEqCurrentPreset()));
 			break;
 		case IT_SPEED:
 			effectsFormatSpeed(buf, len, getPlaybackSpeed());
@@ -1141,6 +1151,9 @@ static enum menu_result activate(struct menu* m, struct screens* s,
 
 		case IT_SEARCH:
 			return MENU_SEARCH;
+
+		case IT_EQ:
+			return MENU_EQ;
 
 		case IT_REFRESH:
 			/* Close, re-scan the folder (re-reading all tags, in case

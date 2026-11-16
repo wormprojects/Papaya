@@ -13,7 +13,8 @@ enum page_result
 {
 	PAGE_STAY,		/* still open */
 	PAGE_CLOSE,		/* close, back to the browser */
-	PAGE_TO_MENU	/* close, back to the menu it was opened from */
+	PAGE_TO_MENU,	/* close, back to the menu it was opened from */
+	PAGE_VALUE		/* open the value entry for this page, then come back */
 };
 
 /* Held keys repeat after this delay, at this rate (ms) */

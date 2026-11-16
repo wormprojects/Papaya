@@ -536,16 +536,17 @@ static const char* keyLabel(int code)
 	}
 }
 
-static bool numericKey(int code, bool allowDot)
+static bool numericKey(int code, bool allowDot, bool allowMinus)
 {
 	return (code >= '0' && code <= '9') || (code == '.' && allowDot) ||
+	       (code == '-' && allowMinus) ||
 	       code == SS_KEY_DEL || code == SS_KEY_CLEAR || code == SS_KEY_DONE;
 }
 
 /* numeric: value entry, keys that do nothing there are drawn dim. */
 static void keyboard(struct botCanvas* c, const struct palette* p,
                      int keyRow, int keyCol, int pressedKey, bool numeric,
-                     bool allowDot)
+                     bool allowDot, bool allowMinus)
 {
 	for(int r = 0; r < SS_KB_ROWS; r++)
 	{
@@ -592,7 +593,7 @@ static void keyboard(struct botCanvas* c, const struct palette* p,
 				fg = p->text;
 			}
 
-			if(numeric && !numericKey(code, allowDot) &&
+			if(numeric && !numericKey(code, allowDot, allowMinus) &&
 			   face != p->accent && face != p->text)
 				fg = blend(p->bg, p->text, 95);
 			box(c, x, y, w, SS_KEY_H, face);
@@ -765,7 +766,7 @@ void ssDraw(struct botCanvas* c, const struct topColors* col,
 
 	if(v->typing)
 	{
-		keyboard(c, &p, v->keyRow, v->keyCol, v->pressedKey, false, false);
+		keyboard(c, &p, v->keyRow, v->keyCol, v->pressedKey, false, false, false);
 		hints(c, &p, " A key  B delete  Y results  SEL close");
 		return;
 	}
@@ -912,10 +913,231 @@ void veDraw(struct botCanvas* c, const struct topColors* col,
 		text(c, 6, 76, v->result, p.accent);
 	else
 		text(c, 6, 76, "Y sets it, B cancels when empty", p.dim);
-	text(c, 6, 100, "Moving the slider later snaps it", p.dim);
-	text(c, 6, 110, "back to its steps.", p.dim);
+	text(c, 6, 100, "Moving it later snaps it back to", p.dim);
+	text(c, 6, 110, "its steps.", p.dim);
 
 	keyboard(c, &p, v->keyRow, v->keyCol, v->pressedKey, true,
-	         v->allowDot);
+	         v->allowDot, v->allowMinus);
 	hints(c, &p, " A key  B delete  Y set  SEL cancel");
+}
+
+/* ------------------------------------------------------------------ */
+/* Equalizer                                                           */
+/* ------------------------------------------------------------------ */
+
+#define EQ_GY			22		/* graph top */
+#define EQ_GH			120		/* graph height */
+#define EQ_ZERO_Y		(EQ_GY + EQ_GH / 2)
+#define EQ_PRE_X		6
+#define EQ_BAND_X		40
+#define EQ_PITCH		28
+#define EQ_COL_W		22
+#define EQ_VAL_Y		(EQ_GY + EQ_GH + 4)
+#define EQ_LABEL_Y		(EQ_VAL_Y + 11)
+#define EQ_READ_Y		(EQ_LABEL_Y + 17)
+#define EQ_NET_Y		(EQ_READ_Y + 12)
+#define EQ_BTN_Y		203
+#define EQ_BTN_H		20
+
+static const struct btn eqButtons[3] =
+{
+	{ 6, 96, "Preset >" },
+	{ 106, 124, "Auto preamp" },
+	{ 234, 80, "Flat" },
+};
+
+static int eqColX(int col)
+{
+	return col == 0 ? EQ_PRE_X : EQ_BAND_X + (col - 1) * EQ_PITCH;
+}
+
+int eqColumnAt(int x, int y)
+{
+	if(y < EQ_GY || y >= EQ_LABEL_Y + CH + 2)
+		return -1;
+	for(int col = 0; col < EQ_COLUMNS; col++)
+		if(x >= eqColX(col) - 2 && x < eqColX(col) + EQ_COL_W + 2)
+			return col;
+	return -1;
+}
+
+int eqColumnAtClamped(int x)
+{
+	if(x < EQ_BAND_X - 3)
+		return 0;
+	for(int col = 1; col < EQ_COLUMNS; col++)
+		if(x < eqColX(col) + EQ_PITCH - 2)
+			return col;
+	return EQ_COLUMNS - 1;
+}
+
+/* Whole dB, in tenths. The preamp track runs 0 (top) down to preMin; the
+ * band tracks are centred on 0. */
+int eqValueAt(const struct eqView* v, int col, int y)
+{
+	int t;
+
+	if(col == 0)
+	{
+		int dbMax = -v->preMin / 10;
+
+		/* y from the top, spread over the whole track */
+		t = -(((y - EQ_GY) * dbMax + EQ_GH / 2) / EQ_GH) * 10;
+		return t < v->preMin ? v->preMin : t > 0 ? 0 : t;
+	}
+	{
+		int dbMax = v->bandMax / 10;
+		int d = EQ_ZERO_Y - y;			/* px above the centre */
+		int half = EQ_GH / 2;
+		int db = d >= 0 ? (d * dbMax + half / 2) / half :
+		                  -((-d * dbMax + half / 2) / half);
+
+		t = db * 10;
+		return t < -v->bandMax ? -v->bandMax : t > v->bandMax ? v->bandMax : t;
+	}
+}
+
+int eqButtonAt(int x, int y)
+{
+	if(y < EQ_BTN_Y || y >= EQ_BTN_Y + EQ_BTN_H)
+		return -1;
+	for(int i = 0; i < 3; i++)
+		if(x >= eqButtons[i].x && x < eqButtons[i].x + eqButtons[i].w)
+			return EQ_FOCUS_PRESET + i;
+	return -1;
+}
+
+static void eqDbText(char* buf, size_t len, int tenths)
+{
+	int a = tenths < 0 ? -tenths : tenths;
+
+	/* Rounded to whole dB for the small labels */
+	a = (a + 5) / 10;
+	if(a == 0)
+		snprintf(buf, len, "0");
+	else
+		snprintf(buf, len, "%c%d", tenths < 0 ? '-' : '+', a);
+}
+
+static void eqFullDb(char* buf, size_t len, int tenths)
+{
+	int a = tenths < 0 ? -tenths : tenths;
+
+	if(a % 10 == 0)
+		snprintf(buf, len, "%s%d dB", tenths < 0 ? "-" : tenths > 0 ? "+" : "",
+		         a / 10);
+	else
+		snprintf(buf, len, "%s%d.%d dB", tenths < 0 ? "-" : "+", a / 10,
+		         a % 10);
+}
+
+static void eqFreqText(char* buf, size_t len, int hz)
+{
+	if(hz >= 1000)
+		snprintf(buf, len, "%dk", hz / 1000);
+	else
+		snprintf(buf, len, "%d", hz);
+}
+
+void eqDraw(struct botCanvas* c, const struct topColors* col,
+            const struct eqView* v)
+{
+	struct palette	p;
+	uint16_t		track;
+	char			buf[64], a[24];
+	int				half = EQ_GH / 2;
+
+	palette(col, &p);
+	track = blend(p.bg, p.text, 22);
+	fill(c, 0, 0, BOT_W, BOT_H, p.bg);
+	header(c, &p, "equalizer", v->preset);
+
+	for(int k = 0; k < EQ_COLUMNS; k++)
+	{
+		int			x = eqColX(k);
+		bool		focus = v->focus == k;
+		uint16_t	bar = focus ? p.accent : p.bar;
+		int			tenths = k == 0 ? v->pre : v->band[k - 1];
+		int			y0, y1;
+
+		box(c, x, EQ_GY, EQ_COL_W, EQ_GH, track);
+		if(k == 0)
+		{
+			/* hangs from the top: 0 dB, down to the lowest preamp */
+			int len = -tenths * EQ_GH / -v->preMin;
+
+			y0 = EQ_GY;
+			y1 = EQ_GY + len;
+		}
+		else
+		{
+			int len = tenths * half / v->bandMax;
+
+			y0 = len >= 0 ? EQ_ZERO_Y - len : EQ_ZERO_Y;
+			y1 = len >= 0 ? EQ_ZERO_Y : EQ_ZERO_Y - len;
+		}
+		if(y1 > y0)
+			fill(c, x + 3, y0, EQ_COL_W - 6, y1 - y0, bar);
+		if(k > 0)
+			hline(c, x, EQ_ZERO_Y, EQ_COL_W, p.dim);
+		if(focus)
+			outline(c, x - 2, EQ_GY - 2, EQ_COL_W + 4, EQ_GH + 4, p.accent);
+
+		/* value and name under the column, centred */
+		eqDbText(buf, sizeof(buf), tenths);
+		text(c, x + (EQ_COL_W - (int)strlen(buf) * CH) / 2, EQ_VAL_Y, buf,
+		     tenths == 0 ? p.dim : p.text);
+		if(k == 0)
+			snprintf(buf, sizeof(buf), "pre");
+		else
+			eqFreqText(buf, sizeof(buf), v->freq[k - 1]);
+		text(c, x + (EQ_COL_W - (int)strlen(buf) * CH) / 2, EQ_LABEL_Y, buf,
+		     focus ? p.accent : p.dim);
+	}
+	/* What's selected, and whether the loud end can clip */
+	if(v->focus == 0)
+	{
+		eqFullDb(a, sizeof(a), v->pre);
+		snprintf(buf, sizeof(buf), "preamp  %s", a);
+	}
+	else if(v->focus < EQ_COLUMNS)
+	{
+		eqFullDb(a, sizeof(a), v->band[v->focus - 1]);
+		if(v->freq[v->focus - 1] >= 1000)
+			snprintf(buf, sizeof(buf), "%d kHz  %s",
+			         v->freq[v->focus - 1] / 1000, a);
+		else
+			snprintf(buf, sizeof(buf), "%d Hz  %s",
+			         v->freq[v->focus - 1], a);
+	}
+	else
+		snprintf(buf, sizeof(buf), "%s",
+		         v->focus == EQ_FOCUS_PRESET ?
+		         "preset: Up/Down or A to change" :
+		         v->focus == EQ_FOCUS_AUTO ?
+		         "A: preamp = minus the loudest boost" :
+		         "A: all bands and the preamp to 0");
+	text(c, 6, EQ_READ_Y, buf, p.text);
+
+	eqFullDb(a, sizeof(a), v->netPeak);
+	if(v->netPeak > 5)
+	{
+		snprintf(buf, sizeof(buf), "loudest point %s: can clip", a);
+		text(c, 6, EQ_NET_Y, buf, p.accent);
+	}
+	else
+	{
+		snprintf(buf, sizeof(buf), "loudest point %s: no clipping", a);
+		text(c, 6, EQ_NET_Y, buf, p.dim);
+	}
+
+	for(int i = 0; i < 3; i++)
+	{
+		int id = EQ_FOCUS_PRESET + i;
+
+		button(c, &p, eqButtons[i].x, EQ_BTN_Y, eqButtons[i].w, EQ_BTN_H,
+		       eqButtons[i].label,
+		       v->pressed == id || v->focus == id ? BTN_FOCUS : BTN_NORMAL);
+	}
+	hints(c, &p, " \x1b\x1a pick  \x1e\x1f change  A zero  Y type");
 }
