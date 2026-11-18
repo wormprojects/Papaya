@@ -4,7 +4,8 @@
 # The Homebrew libraries it links (mpg123, opusfile, faad2, libpng, ...)
 # are copied into Contents/Frameworks and the binary pointed at them, so
 # the app runs on Macs without Homebrew. The version comes from
-# include/version.h.
+# include/version.h, the icon is Papaya.icns (made by mkicon.py from
+# meta/icon.png).
 set -e
 cd "$(dirname "$0")"
 APP=build/Papaya.app
@@ -16,6 +17,7 @@ VERSION="$(ver MAJOR).$(ver MINOR).$(ver MICRO)"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$FW"
 cp build/papaya-mac "$APP/Contents/MacOS/Papaya"
+cp Papaya.icns "$APP/Contents/Resources/Papaya.icns"
 cat > "$APP/Contents/Info.plist" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -24,6 +26,8 @@ cat > "$APP/Contents/Info.plist" <<PL
 <key>CFBundleDisplayName</key><string>Papaya</string>
 <key>CFBundleIdentifier</key><string>com.wormprojects.papaya.mac</string>
 <key>CFBundleExecutable</key><string>Papaya</string>
+<key>CFBundleIconFile</key><string>Papaya</string>
+<key>LSApplicationCategoryType</key><string>public.app-category.music</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>$VERSION</string>
 <key>CFBundleVersion</key><string>$VERSION</string>
