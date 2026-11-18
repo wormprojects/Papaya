@@ -55,7 +55,7 @@ void playerPlayFromBrowser(struct browser* b, int idx);
 void playerSyncPlaylist(const struct browser* b);
 
 /** Play the previous song from the history, if any. */
-void playerPlayPrevious(void);
+bool playerPlayPrevious(void);
 
 /** Skip to the next song (R). */
 void playerSkip(struct browser* b);

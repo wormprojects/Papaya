@@ -36,6 +36,16 @@ static unsigned             m4aTrackIndex = 0;
 static unsigned             m4aSampleIndex = 0;
 static unsigned             m4aTotalFrames = 0;
 
+/* Samples (all channels) one AAC frame decodes to; learnt from the first
+ * decoded frame, 1024 per channel until then. */
+static size_t               m4aFrameSamples = 0;
+/* Samples still to drop from the start of the output (a seek lands up to a
+ * frame early, plus one frame so the decoder is warmed up). */
+static size_t               m4aSkip = 0;
+/* No frame decoded since init: FAAD2 then gives no output for the first
+ * one (after that, the first frame after a seek gives junk instead). */
+static bool                 m4aFresh = true;
+
 /* Maximum AAC frame size we'll handle */
 #define M4A_MAX_FRAME_BYTES (16 * 1024)
 
@@ -303,18 +313,34 @@ static uint64_t decodeM4a(void* buffer)
 
 		decoded = NeAACDecDecode(hDecoder, &frameInfo, m4aFrameBuf, frame_bytes);
 		m4aSampleIndex++;
+		m4aFresh = false;
 
 		if(frameInfo.error > 0 || decoded == NULL)
 			continue;
 
 		if(frameInfo.samples == 0)
 			continue;
+		if(m4aFrameSamples == 0)
+			m4aFrameSamples = frameInfo.samples;
 
 		/* Copy decoded 16-bit PCM samples */
 		{
 			size_t decodedSamples = frameInfo.samples;
 			int16_t* pcm = (int16_t*)decoded;
-			size_t spaceLeft = samplesNeeded - samplesWritten;
+			size_t spaceLeft;
+
+			if(m4aSkip > 0)
+			{
+				size_t drop = m4aSkip < decodedSamples ? m4aSkip :
+				              decodedSamples;
+
+				pcm += drop;
+				decodedSamples -= drop;
+				m4aSkip -= drop;
+				if(decodedSamples == 0)
+					continue;
+			}
+			spaceLeft = samplesNeeded - samplesWritten;
 
 			if(decodedSamples <= spaceLeft)
 			{
@@ -363,15 +389,29 @@ static int seekM4a(size_t sample)
 	if(m4aTotalFrames == 0 || m4aTotalSamples == 0)
 		return -1;
 
-	/* Estimate samples per MP4 frame */
-	samplesPerFrame = m4aTotalSamples / m4aTotalFrames;
-	if(samplesPerFrame == 0) samplesPerFrame = 1024 * m4aChannels;
+	/* AAC-LC: 1024 samples per channel per frame (what the first frame
+	 * decoded to, once there is one). */
+	samplesPerFrame = m4aFrameSamples != 0 ? m4aFrameSamples :
+	                  1024 * (size_t)m4aChannels;
 
+	/* FAAD2 gives no output for the first frame it decodes, so the output
+	 * of frame k (k >= 1) is the audio at (k - 1) frames. The MDCT also
+	 * overlaps the previous frame, so the first frame decoded after a seek
+	 * comes out wrong: it is decoded and dropped (it is frame
+	 * target/frame, one before the one that holds the target), then
+	 * the rest up to the exact sample (m4aSkip). */
 	targetFrame = (unsigned)(sample / samplesPerFrame);
 	if(targetFrame >= m4aTotalFrames)
 		targetFrame = m4aTotalFrames - 1;
 
 	m4aSampleIndex = targetFrame;
+	if(targetFrame == 0)
+		/* Frame 0's output is nothing on a fresh decoder, junk (a frame
+		 * long) on a used one. */
+		m4aSkip = m4aFresh ? sample : sample + samplesPerFrame;
+	else
+		m4aSkip = sample > (size_t)(targetFrame - 1) * samplesPerFrame ?
+		          sample - (size_t)(targetFrame - 1) * samplesPerFrame : 0;
 
 	/* Discard residual PCM */
 	if(pcmResidual != NULL)
@@ -414,6 +454,9 @@ static void exitM4a(void)
 
 	m4aSampleIndex = 0;
 	m4aTotalFrames = 0;
+	m4aFrameSamples = 0;
+	m4aSkip = 0;
+	m4aFresh = true;
 }
 
 /**

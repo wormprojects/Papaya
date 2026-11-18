@@ -8,6 +8,7 @@
 #include "playback.h"
 
 static size_t*			buffSize;
+static bool				scanned;	/* mpg123_scan() done for this file */
 static mpg123_handle	*mh = NULL;
 static long				rate;
 static int				channels;
@@ -41,6 +42,7 @@ static uint64_t decodeMp3(void* buffer);
 static void exitMp3(void);
 static size_t getFileSamplesMp3(void);
 static int seekMp3(size_t sample);
+static void prepareExactSeekMp3(void);
 
 /**
  * Set decoder parameters for MP3.
@@ -61,6 +63,7 @@ void setMp3(struct decoder_fn* decoder)
 	decoder->exit = &exitMp3;
 	decoder->getFileSamples = &getFileSamplesMp3;
 	decoder->seek = &seekMp3;
+	decoder->prepareExactSeek = &prepareExactSeekMp3;
 }
 
 static size_t getFileSamplesMp3(void)
@@ -101,6 +104,7 @@ int initMp3(const char* file)
 		return -1;
 	}
 
+	scanned = false;
 	if(mpg123_replace_reader_handle(mh, readMp3Cb, seekMp3Cb, NULL)
 			!= MPG123_OK ||
 			mpg123_open_handle(mh, &mp3File) != MPG123_OK ||
@@ -172,6 +176,19 @@ static int seekMp3(size_t sample)
 	if(mpg123_seek(mh, targetFrame, SEEK_SET) < 0)
 		return -1;
 	return 0;
+}
+
+/**
+ * Variable-bitrate files are only seeked approximately from their header's
+ * table (positions off by thousands of samples), which would make backwards
+ * playback overlap and skip. A scan builds an exact frame index; it reads
+ * the whole file, so it is done only when playing backwards.
+ */
+static void prepareExactSeekMp3(void)
+{
+	if(!scanned)
+		mpg123_scan(mh);
+	scanned = true;
 }
 
 /**

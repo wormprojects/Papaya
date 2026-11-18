@@ -97,6 +97,11 @@ void playerInit(void)
  *
  * \param	ep_file	File to play, or NULL to just stop.
  */
+/* Set while going back (playerPlayPrevious): the song being left is not
+ * put on the history, or going back twice would return to it instead of
+ * to the song before the one just played. */
+static bool goingBack = false;
+
 static int changeFile(const char* ep_file)
 {
 	s32 prio;
@@ -114,7 +119,7 @@ static int changeFile(const char* ep_file)
 		return 0;
 
 	/* Push current song to history before switching */
-	if(hasNowPlaying && nowPlayingFile[0] != '\0')
+	if(!goingBack && hasNowPlaying && nowPlayingFile[0] != '\0')
 		historyPush(nowPlayingFile);
 
 	if(memccpy(playbackInfo.file, ep_file, '\0',
@@ -351,13 +356,35 @@ static void plSetCur(int i)
 			}
 }
 
+/*
+ * Reverse playback (a negative speed) walks the playlist backwards too, so
+ * an album played in reverse goes 144, 143, 142... (in the folder, shuffle
+ * or custom order): plNext()/plAfter() and everything shown as "up next"
+ * follow the direction. This is not L's "previous", which goes back
+ * through the history (where the user jumped from).
+ */
+static bool plBackwards(void)
+{
+	return getPlaybackSpeed() < 0.0f;
+}
+
+/* Where `cur` is in the play order (order[] position, or the entry index
+ * in folder order); -1 = before the first song. */
+static int plBase(void)
+{
+	return pl.orderValid ? pl.orderPos : pl.cur;
+}
+
 /**
  * The playlist entry that plays after `cur`: next in the shuffle order
  * (reshuffling when it runs out: shuffle never stops), or the next file,
- * wrapping with Repeat All. -1 if none.
+ * wrapping with Repeat All. `back`: the one before instead (going through
+ * the album in reverse). -1 if none.
  */
-static int plNext(void)
+static int plNext(bool back)
 {
+	int p;
+
 	if(pl.count <= 0)
 		return -1;
 
@@ -367,7 +394,7 @@ static int plNext(void)
 		if(!pl.orderValid)
 			return -1;
 
-		if(pl.orderPos + 1 >= pl.count)
+		if(!back && pl.orderPos + 1 >= pl.count)
 		{
 			/* Whole folder played: new order, not starting with the
 			 * song that just played. */
@@ -382,31 +409,70 @@ static int plNext(void)
 				pl.order[1] = last;
 			}
 		}
-		return pl.order[pl.orderPos + 1];
+		else if(back && pl.orderPos <= 0)
+		{
+			/* Backwards past the start of the order: a new one, played
+			 * from its end, not starting with the song that just
+			 * played. */
+			int last = pl.cur;
+
+			plShuffle(-1);
+			if(!pl.orderValid)
+				return -1;
+			pl.orderPos = pl.count;		/* "after the end" */
+			if(last >= 0 && pl.count > 1 && pl.order[pl.count - 1] == last)
+			{
+				pl.order[pl.count - 1] = pl.order[pl.count - 2];
+				pl.order[pl.count - 2] = last;
+			}
+		}
+		return pl.order[pl.orderPos + (back ? -1 : 1)];
 	}
 
 	if(pl.custom && pl.orderValid)
 	{
-		if(pl.orderPos + 1 < pl.count)
-			return pl.order[pl.orderPos + 1];
-		return repeatMode == REPEAT_ALL ? pl.order[0] : -1;
+		p = pl.orderPos + (back ? -1 : 1);
+		if(p >= 0 && p < pl.count)
+			return pl.order[p];
+		if(repeatMode != REPEAT_ALL)
+			return -1;
+		return pl.order[back ? pl.count - 1 : 0];
 	}
 
-	if(pl.cur + 1 < pl.count)
-		return pl.cur + 1;
+	/* No current song (cur -1) going backwards: start from the last. */
+	p = back ? (pl.cur < 0 ? pl.count : pl.cur) - 1 : pl.cur + 1;
+	if(p >= 0 && p < pl.count)
+		return p;
 	if(repeatMode == REPEAT_ALL)
-		return 0;
+		return back ? pl.count - 1 : 0;
 	return -1;
+}
+
+/*
+ * Position in the play order (order[] index, or entry index in folder
+ * order) of the k-th song to play after `cur` (k = 0 plays next), without
+ * wrapping: past the end (or before the start, backwards) when it isn't
+ * there. In reverse it counts down from `cur`.
+ */
+static int plAfterPos(int k)
+{
+	int base = plBase();
+
+	if(plBackwards())
+		return (base < 0 ? pl.count : base) - 1 - k;
+	return base + 1 + k;
 }
 
 /*
  * The k-th playlist song after `cur` in play order (k = 0 plays next), or
  * -1: the shuffle order, the user's own order, or the folder order
  * (wrapping round with Repeat All, which lists the songs before `cur`).
+ * Backwards during reverse playback (see plBackwards()).
  */
 static int plAfter(int k)
 {
-	int p;
+	int p, base;
+	bool back = plBackwards();
 
 	if(pl.count <= 0 || k < 0)
 		return -1;
@@ -417,28 +483,21 @@ static int plAfter(int k)
 		if(!pl.orderValid)
 			return -1;
 	}
-	if(pl.orderValid)
-	{
-		p = pl.orderPos + 1 + k;
-		if(p < pl.count)
-			return pl.order[p];
-		if(!shuffleEnabled && repeatMode == REPEAT_ALL)
-		{
-			p -= pl.count;
-			return p < pl.orderPos ? pl.order[p] : -1;
-		}
-		return -1;
-	}
+	p = plAfterPos(k);
+	base = plBase();
+	if(p >= 0 && p < pl.count)
+		return pl.orderValid ? pl.order[p] : p;
 
-	p = pl.cur + 1 + k;
-	if(p < pl.count)
-		return p;
-	if(repeatMode == REPEAT_ALL)
-	{
-		p -= pl.count;
-		return p < pl.cur ? p : -1;
-	}
-	return -1;
+	/* Wrapping round with Repeat All (not in shuffle: a new order is made
+	 * when it runs out), up to the current song. */
+	if((pl.orderValid && shuffleEnabled) || repeatMode != REPEAT_ALL)
+		return -1;
+	if(back && base < 0)
+		return -1;		/* already listed the whole playlist */
+	p += back ? pl.count : -pl.count;
+	if(back ? p <= base : p >= base)
+		return -1;
+	return pl.orderValid ? pl.order[p] : p;
 }
 
 /* Keep the browser cursor on the playing song if it shows that folder. */
@@ -574,6 +633,17 @@ int playerUpcoming(const struct browser* b, const char** titles,
 
 		*dir = b->list.currentDir;
 		*total = n > 0 ? n : 0;
+		if(plBackwards())
+		{
+			/* Reverse: the files before the cursor, going up. */
+			for(int i = (from < 0 ? n : from) - 1; i >= 0 && count < max;
+			    i--)
+			{
+				files[count] = browserFileName(b, i);
+				titles[count++] = browserFileTitle(b, i);
+			}
+			return count;
+		}
 		for(int i = from + 1; i < n && count < max; i++)
 		{
 			files[count] = browserFileName(b, i);
@@ -624,7 +694,8 @@ int playerPlaylistAfter(const char** titles, const char** files, int max)
 
 unsigned playerPlaylistVersion(void)
 {
-	return plVersion + songId;
+	/* The list turns round when the speed's sign does. */
+	return plVersion + songId + (plBackwards() ? 0x40000000u : 0);
 }
 
 /* Playlist song `e` plays now (defined below). */
@@ -665,10 +736,13 @@ bool playerPlaylistMove(int k, int dir)
 	if(!pl.orderValid)
 		return false;
 
-	/* Only songs that haven't wrapped round (Repeat All) swap. */
-	pa = pl.orderPos + 1 + k;
-	pb = pa + dir;
-	if(pa >= pl.count || pb >= pl.count || pb <= pl.orderPos)
+	/* Only songs that haven't wrapped round (Repeat All) swap. In reverse
+	 * the list runs down the order, so "down" in it is down the order. */
+	pa = plAfterPos(k);
+	pb = plAfterPos(k + dir);
+	if(pa < 0 || pb < 0 || pa >= pl.count || pb >= pl.count ||
+	   (plBackwards() ? (pa >= pl.orderPos || pb >= pl.orderPos) :
+	                    (pa <= pl.orderPos || pb <= pl.orderPos)))
 		return false;
 
 	{
@@ -730,25 +804,28 @@ void playerPlayFromBrowser(struct browser* b, int idx)
 	plPlay(idx, true);
 }
 
-void playerPlayPrevious(void)
+bool playerPlayPrevious(void)
 {
 	char	prevPath[PATH_MAX];
 	int		i;
 
 	if(historyPop(prevPath, sizeof(prevPath)) != 0)
-		return;
+		return false;
 
 	/* Going back to a playlist song moves the playlist back too. */
 	if((i = plFindPath(prevPath)) >= 0)
 		plSetCur(i);
+	goingBack = true;
 	startSong(prevPath, true);
+	goingBack = false;
+	return true;
 }
 
 /**
  * queue -> playlist (shuffle order / next file / Repeat All wrap).
  * See player.h.
  */
-static void advance(struct browser* b, bool manual)
+static void advance(struct browser* b, bool manual, bool back)
 {
 	int next;
 
@@ -773,7 +850,7 @@ static void advance(struct browser* b, bool manual)
 		pl.cur = browserSelectedFile(b);
 	}
 
-	if((next = plNext()) < 0)
+	if((next = plNext(back)) < 0)
 		return;
 
 	plPlay(next, manual);
@@ -782,15 +859,25 @@ static void advance(struct browser* b, bool manual)
 
 void playerSkip(struct browser* b)
 {
-	advance(b, true);
+	/* R plays what the "up next" list shows: in reverse, the song before
+	 * this one in the playlist. */
+	advance(b, true, plBackwards());
 }
 
 bool playerHandleSongEnd(struct browser* b)
 {
+	bool back;
+
 	if(playbackError != -1)
 		return false;
 
 	playbackError = 0;
+
+	/* Reverse playback ran back to the start of the song: like a song
+	 * ending, but the playlist goes backwards (an album in reverse: 144,
+	 * 143, ...), and the next song plays backwards from its end. Queued
+	 * songs still come first, Repeat One plays this song again. */
+	back = playbackTakeReachedStart();
 
 	if(repeatMode == REPEAT_ONE && hasNowPlaying &&
 	   nowPlayingFile[0] != '\0')
@@ -802,7 +889,7 @@ bool playerHandleSongEnd(struct browser* b)
 		return true;
 	}
 
-	advance(b, false);
+	advance(b, false, back);
 	return true;
 }
 

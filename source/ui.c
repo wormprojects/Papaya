@@ -14,6 +14,7 @@
  */
 
 #include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -24,6 +25,7 @@
 #include "brightness.h"
 #include "browser.h"
 #include "coverart.h"
+#include "demon.h"
 #include "effects.h"
 #include "player.h"
 #include "playback.h"
@@ -34,7 +36,15 @@
 #include "ui.h"
 #include "version.h"
 
+/* The macOS branch resizes the top screen (topSetSize); the pixel store is
+ * sized for the biggest canvas it allows (see uiSetTopSize). */
+#ifdef PAPAYA_DESKTOP
+#define TOP_PX_MAX_W	2048
+#define TOP_PX_MAX_H	1280
+static uint16_t			topPixels[TOP_PX_MAX_W * TOP_PX_MAX_H];
+#else
 static uint16_t			topPixels[TOP_W * TOP_H];
+#endif
 static struct topCanvas	canvas;
 static struct topColors	colors;
 static bool				initialised = false;
@@ -58,6 +68,25 @@ static struct browser*	browser = NULL;
  * copies it over the console's framebuffer. */
 static uint16_t			botPixels[BOT_W * BOT_H];
 static PrintConsole*	bottomConsole = NULL;
+
+/* Demon mode (settingsDemonMode): while a song plays in reverse both
+ * screens get demon.c's rainbow/glitch effect. 3DS: the top screen gets it
+ * into demonTop, which is what's copied to the framebuffers meanwhile. The
+ * bottom console draws straight into its framebuffer, so meanwhile it
+ * draws into demonShadow instead and the effect goes from there to the
+ * screen (the pixel pages present into it too). Both are redone every
+ * DEMON_EVERY frames (30 a second). On the Mac the window applies it to
+ * what it shows (macSetDemon, shim/gfxhid.c). */
+static bool				demonOn = false;
+#ifndef PAPAYA_DESKTOP
+#define DEMON_EVERY		2
+static PrintConsole*	demonConsole = NULL;	/* the 3DS bottom console */
+static u16*				demonReal = NULL;		/* its framebuffer, while on */
+static u16				demonShadow[BOT_W * BOT_H];
+static u16				demonTop[TOP_W * TOP_H];
+#else
+void macSetDemon(bool on) __attribute__((weak));
+#endif
 
 #define REFRESH_MS				500
 #define PERF_REFRESH_MS			5000
@@ -107,7 +136,7 @@ static void markDirty(int x0, int x1)
 
 static void markAllDirty(void)
 {
-	markDirty(0, TOP_W);
+	markDirty(0, topWidth());
 }
 
 static uint16_t rgb565(const struct themeColor* c)
@@ -428,6 +457,9 @@ void uiInit(struct screens* s, const struct theme_t* theme,
 	canvas.px = topPixels;
 	canvas.font = consoleGetDefault()->font.gfx;
 	bottomConsole = &s->bottom;
+#ifndef PAPAYA_DESKTOP
+	demonConsole = &s->bottom;
+#endif
 
 	mcuOk = mcuAvailable;
 	initialised = true;
@@ -450,6 +482,36 @@ void uiApplyTheme(struct screens* s, const struct theme_t* theme)
 		uiShowSplash(s);
 	else if(topMode == TOP_NOW_PLAYING)
 		renderNowPlaying();
+}
+
+/* macOS branch: which console the pixel pages are presented to (the menu
+ * and the pages live on the overlay surface, the browser on the bottom). */
+void uiSetBottomConsole(PrintConsole* c)
+{
+	bottomConsole = c;
+}
+
+/* macOS branch: the window was resized, the top screen is now w x h pixels
+ * (at most TOP_PX_MAX_W x TOP_PX_MAX_H). Redraws everything. */
+void uiSetTopSize(int w, int h)
+{
+#ifdef PAPAYA_DESKTOP
+	if(w > TOP_PX_MAX_W)
+		w = TOP_PX_MAX_W;
+	if(h > TOP_PX_MAX_H)
+		h = TOP_PX_MAX_H;
+	topSetSize(w, h);
+	if(!initialised)
+		return;
+	if(topMode == TOP_SPLASH)
+		uiShowSplash(NULL);
+	else
+		renderPending = true;
+	markAllDirty();
+#else
+	(void)w;
+	(void)h;
+#endif
 }
 
 void uiRequestRedraw(void)
@@ -542,6 +604,61 @@ static void updateFooter(void)
 	markAllDirty();		/* a row across the screen = every column */
 }
 
+/* Demon mode on/off as the speed changes sign; on the 3DS, also redo the
+ * effect (before the flush; the bottom screen shows what was drawn up to a
+ * couple of frames late, which nobody sees). */
+static void demonUpdate(void)
+{
+	bool want = settingsDemonMode() && getPlaybackSpeed() < 0.0f &&
+	            isPlaying();
+
+	if(want != demonOn)
+	{
+		demonOn = want;
+		markAllDirty();		/* the top screen again, with/without it */
+#ifdef PAPAYA_DESKTOP
+		if(macSetDemon != NULL)
+			macSetDemon(want);
+#else
+		if(demonConsole != NULL && demonConsole->frameBuffer != NULL)
+		{
+			if(want)
+			{
+				/* Draw into the shadow from now on. */
+				demonReal = demonConsole->frameBuffer;
+				memcpy(demonShadow, demonReal, sizeof(demonShadow));
+				demonConsole->frameBuffer = demonShadow;
+				demonApply(topPixels, demonTop, topWidth(), topHeight(),
+				           (unsigned long)osGetTime());
+			}
+			else if(demonReal != NULL)
+			{
+				/* Back to drawing on the screen itself. */
+				memcpy(demonReal, demonShadow, sizeof(demonShadow));
+				demonConsole->frameBuffer = demonReal;
+				demonReal = NULL;
+			}
+		}
+#endif
+	}
+
+#ifndef PAPAYA_DESKTOP
+	{
+		static unsigned frame = 0;
+
+		if(demonOn && ++frame % DEMON_EVERY == 0)
+		{
+			unsigned long ms = (unsigned long)osGetTime();
+
+			if(demonReal != NULL)
+				demonApply(demonShadow, demonReal, BOT_W, BOT_H, ms);
+			demonApply(topPixels, demonTop, topWidth(), topHeight(), ms);
+			markAllDirty();
+		}
+	}
+#endif
+}
+
 void uiPresentTop(void)
 {
 	static u64	titlesMs = 0;
@@ -574,7 +691,7 @@ void uiPresentTop(void)
 	{
 		view.volumePct = volumePct;
 		topUpdateVolume(&canvas, &colors, &view);
-		markDirty(TOP_ART_COL0, TOP_ART_COL0 + TOP_ART_COLS);
+		markDirty(topArtCol0(), topArtCol0() + TOP_ART_COLS);
 	}
 
 	/* Regular refresh (time, clock, battery) */
@@ -604,7 +721,7 @@ void uiPresentTop(void)
 	{
 		view.scrollMs = (unsigned long)(osGetTime() - songStartMs);
 		if(topUpdateScroll(&canvas, &colors, &view))
-			markDirty(TOP_ART_COL0, TOP_ART_COL0 + TOP_ART_COLS);
+			markDirty(topArtCol0(), topArtCol0() + TOP_ART_COLS);
 	}
 
 	/* Spinning disc: turns while a song plays (not while paused) at the
@@ -617,9 +734,19 @@ void uiPresentTop(void)
 
 		if(topMode == TOP_NOW_PLAYING && view.disc && view.playing &&
 		   !isPaused())
-			discPos = (discPos + (now - lastMs) * TOP_DISC_STEPS * 1000 /
-			           (u64)settingsDiscTurnMs()) %
-			          (TOP_DISC_STEPS * 1000);
+		{
+			const s64	full = (s64)TOP_DISC_STEPS * 1000;
+			s64			d = (s64)(now - lastMs) * full /
+			                (s64)settingsDiscTurnMs();
+
+			/* "Sync disc with playback": at the playback speed, the
+			 * other way round in reverse (in hundredths, like the
+			 * speed setting). */
+			if(settingsDiscSync())
+				d = d * (s64)lrintf(getPlaybackSpeed() * 100.0f) / 100;
+			d %= full;
+			discPos = (u64)(((s64)discPos + d + full) % full);
+		}
 		lastMs = now;
 		discStep = (int)(discPos / 1000);
 
@@ -628,18 +755,28 @@ void uiPresentTop(void)
 			topDiscWork(&view);
 			view.discStep = discStep;
 			if(topUpdateDisc(&canvas, &colors, &view))
-				markDirty(TOP_ART_COL0, TOP_ART_COL0 + TOP_ART_COLS);
+				markDirty(topArtCol0(), topArtCol0() + TOP_ART_COLS);
 		}
 	}
+
+	demonUpdate();
 
 	if(dirtyFrames <= 0)
 		return;
 
 	fb = gfxGetFramebuffer(GFX_TOP, GFX_LEFT, &w, &h);
-	if((int)w * h == TOP_W * TOP_H && dirtyX1 > dirtyX0)
-		memcpy(fb + (size_t)dirtyX0 * TOP_H * sizeof(uint16_t),
-		       topPixels + (size_t)dirtyX0 * TOP_H,
-		       (size_t)(dirtyX1 - dirtyX0) * TOP_H * sizeof(uint16_t));
+	if((int)w * h == topWidth() * topHeight() && dirtyX1 > dirtyX0)
+	{
+		size_t			off = (size_t)dirtyX0 * topHeight();
+		size_t			n = (size_t)(dirtyX1 - dirtyX0) * topHeight();
+		const uint16_t*	src = topPixels;
+
+#ifndef PAPAYA_DESKTOP
+		if(demonOn)
+			src = demonTop;		/* the canvas with the effect */
+#endif
+		memcpy((uint16_t*)fb + off, src + off, n * sizeof(uint16_t));
+	}
 	dirtyFrames--;
 }
 
@@ -654,6 +791,29 @@ void uiBottomPresent(void)
 {
 	/* The console's framebuffer has the same layout as the canvas (240
 	 * pixels per column); the bottom screen isn't double-buffered. */
-	if(bottomConsole != NULL && bottomConsole->frameBuffer != NULL)
-		memcpy(bottomConsole->frameBuffer, botPixels, sizeof(botPixels));
+	if(bottomConsole == NULL || bottomConsole->frameBuffer == NULL)
+		return;
+#ifdef PAPAYA_DESKTOP
+	/* macOS branch: the bottom screen can be bigger than 320x240. The page
+	 * keeps its size and sits in the middle (whole characters, like the
+	 * menu's window); the rest is the theme's background. */
+	{
+		int			fbW = bottomConsole->consoleWidth * 8;
+		int			fbH = bottomConsole->consoleHeight * 8;
+		int			ox = ((fbW - BOT_W) / 16) * 8, oy = ((fbH - BOT_H) / 16) * 8;
+		uint16_t*	fb = bottomConsole->frameBuffer;
+
+		if(fbW != BOT_W || fbH != BOT_H)
+		{
+			for(size_t i = 0; i < (size_t)fbW * fbH; i++)
+				fb[i] = colors.bg;
+			for(int x = 0; x < BOT_W; x++)
+				memcpy(fb + (size_t)(x + ox) * fbH + (fbH - BOT_H - oy),
+				       botPixels + (size_t)x * BOT_H,
+				       BOT_H * sizeof(uint16_t));
+			return;
+		}
+	}
+#endif
+	memcpy(bottomConsole->frameBuffer, botPixels, sizeof(botPixels));
 }

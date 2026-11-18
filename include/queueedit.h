@@ -65,4 +65,10 @@ enum page_result queueEditInput(struct queueEdit* e, u32 kDown, u32 kHeld);
 /** Every frame while open: follows queue changes, redraws if needed. */
 void queueEditUpdate(struct queueEdit* e);
 
+/** macOS branch: scroll the song list by `rows` (wheel). */
+void queueEditScrollBy(struct queueEdit* e, int rows);
+
+/** macOS branch: the song under pixel (px, py), or -1. */
+int queueEditRowAt(const struct queueEdit* e, int px, int py);
+
 #endif

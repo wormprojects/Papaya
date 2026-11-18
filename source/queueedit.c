@@ -616,3 +616,36 @@ void queueEditUpdate(struct queueEdit* e)
 	if(e->dirty)
 		draw(e);
 }
+
+/* macOS branch: wheel / trackpad scrolling (the selection rides along only
+ * if it would leave the screen, like dragging the scrollbar). */
+void queueEditScrollBy(struct queueEdit* e, int rows)
+{
+	int top = e->top + rows;
+
+	if(top > maxTop())
+		top = maxTop();
+	if(top < 0)
+		top = 0;
+	if(top == e->top)
+		return;
+	e->top = top;
+	if(e->selected >= 0)
+	{
+		if(e->selected < top)
+			e->selected = top;
+		if(e->selected >= top + QE_ROWS)
+			e->selected = top + QE_ROWS - 1;
+	}
+	e->dirty = true;
+}
+
+/* macOS branch: which song a click landed on. */
+int queueEditRowAt(const struct queueEdit* e, int px, int py)
+{
+	int row = qeRowAt(px, py);
+
+	if(e->confirm || row < 0 || e->top + row >= total())
+		return -1;
+	return e->top + row;
+}

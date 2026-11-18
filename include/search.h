@@ -86,6 +86,12 @@ enum page_result searchInput(struct search* s, u32 kDown, u32 kHeld,
 /** Every frame while open: new matches, caret blink, redraw. */
 void searchUpdate(struct search* s);
 
+/** macOS branch: scroll the results by `rows` (wheel). */
+void searchScrollBy(struct search* s, int rows);
+
+/** macOS branch: the result under pixel (px, py) (index into the list), or -1. */
+int searchRowAt(const struct search* s, int px, int py);
+
 /** Stop the scan and free everything (after searchInput closed it). */
 void searchClose(struct search* s);
 

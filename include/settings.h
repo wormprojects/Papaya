@@ -21,6 +21,8 @@
  *   list_titles = 0|1	Tag titles in the top screen's queue/playlist
  *						(read for the visible rows only); 0: filenames.
  *   spinning_disc = 0|1	Round cover art that spins while playing.
+ *   disc_sync = 0|1		The disc turns at the playback speed.
+ *   demon_mode = 0|1		Rainbow/glitch screens while playing in reverse.
  *   disc_speed = 8|16|33|45|78	How fast it turns, in rpm (display only).
  *   performance_mode = 0|1	Forces list titles off, placeholder art,
  *						reverb and the spinning disc off, and no tag
@@ -97,6 +99,20 @@ void settingsSetListTitles(bool on);
 /** Round, spinning cover art (off while performance mode is on). */
 bool settingsSpinningDisc(void);
 void settingsSetSpinningDisc(bool on);
+
+/** "Sync disc with playback": the spinning disc turns at the playback
+ * speed (backwards in reverse, still at 0.0x). Saved. */
+bool settingsDiscSync(void);
+void settingsSetDiscSync(bool on);
+
+/** "Demon mode" (Effects menu): both screens get a drifting rainbow tint
+ * and glitches (demon.c) while a song plays in reverse. Saved. */
+bool settingsDemonMode(void);
+void settingsSetDemonMode(bool on);
+
+/** "Allow reverse" (Effects menu): lets the speed go down to -3.0x. Saved. */
+bool settingsAllowReverse(void);
+void settingsSetAllowReverse(bool on);
 
 /* Disc speed: record speeds, 8 1/3 to 78 rpm (index 2 = 33 1/3). */
 #define DISC_SPEED_COUNT 5

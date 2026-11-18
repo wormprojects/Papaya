@@ -10,6 +10,7 @@
  *   y 228  key hints (dim bar, like the menu's)
  */
 
+#include "keyhints.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -363,8 +364,8 @@ void qeDraw(struct botCanvas* c, const struct topColors* col,
 	if(v->count == 0)
 	{
 		static const char l1[] = "The queue is empty.";
-		static const char l2[] = "Y in the browser queues a song,";
-		static const char l3[] = "or Y on a search result.";
+		static const char l2[] = H_QUEUE_EMPTY1;
+		static const char l3[] = H_QUEUE_EMPTY2;
 
 		text(c, (BOT_W - (int)(sizeof(l1) - 1) * CH) / 2, 80, l1, p.text);
 		text(c, (BOT_W - (int)(sizeof(l2) - 1) * CH) / 2, 100, l2, p.dim);
@@ -429,11 +430,11 @@ void qeDraw(struct botCanvas* c, const struct topColors* col,
 	else if(v->buttonsFocus)
 		hints(c, &p, " A press  \x1b\x1a pick  \x18 songs  B back");
 	else if(v->count == 0)
-		hints(c, &p, " B back  SELECT close");
+		hints(c, &p, H_QUEUE_BAR);
 	else if(v->selected >= v->qCount)
 		hints(c, &p, " A play  \x1a lift  B back");
 	else
-		hints(c, &p, " A play  Y remove  \x1a lift  B back");
+		hints(c, &p, H_QUEUE_KEYS);
 }
 
 int qeRowAt(int x, int y)
@@ -726,7 +727,7 @@ void ssDraw(struct botCanvas* c, const struct topColors* col,
 			q += qlen - maxChars;
 		if(qlen == 0)
 			text(c, x, ty, v->typing ? "type part of a filename" :
-			     "tap here to type", p.dim);
+			     H_SEARCH_FIELD, p.dim);
 		else
 			x = text(c, x, ty, q, p.text);
 		if(v->typing && v->caret)
@@ -766,8 +767,10 @@ void ssDraw(struct botCanvas* c, const struct topColors* col,
 
 	if(v->typing)
 	{
+#ifndef PAPAYA_DESKTOP	/* the desktop has a keyboard */
 		keyboard(c, &p, v->keyRow, v->keyCol, v->pressedKey, false, false, false);
-		hints(c, &p, " A key  B delete  Y results  SEL close");
+#endif
+		hints(c, &p, H_SEARCH_TYPING);
 		return;
 	}
 
@@ -793,12 +796,17 @@ void ssDraw(struct botCanvas* c, const struct topColors* col,
 	if(v->buttonsFocus)
 		hints(c, &p, " A press  \x1b\x1a pick  \x18 results  B type");
 	else
-		hints(c, &p, " A play  Y queue  \x1a open  B type");
+		hints(c, &p, H_SEARCH_LIST);
 }
 
 int ssKeyAt(int x, int y, int* row, int* col)
 {
 	int r, cl, code;
+
+#ifdef PAPAYA_DESKTOP
+	(void)x; (void)y; (void)row; (void)col; (void)r; (void)cl; (void)code;
+	return -1;		/* no on-screen keyboard: the real one is used */
+#endif
 
 	if(y < SS_KB_Y - SS_KEY_GY || x < SS_KB_X - SS_KEY_GX ||
 	   x >= SS_KB_X + SS_KB_COLS * (SS_KEY_W + SS_KEY_GX))
@@ -912,13 +920,15 @@ void veDraw(struct botCanvas* c, const struct topColors* col,
 	if(v->result != NULL)
 		text(c, 6, 76, v->result, p.accent);
 	else
-		text(c, 6, 76, "Y sets it, B cancels when empty", p.dim);
+		text(c, 6, 76, H_VALUE_NOTE, p.dim);
 	text(c, 6, 100, "Moving it later snaps it back to", p.dim);
 	text(c, 6, 110, "its steps.", p.dim);
 
+#ifndef PAPAYA_DESKTOP	/* the desktop has a keyboard */
 	keyboard(c, &p, v->keyRow, v->keyCol, v->pressedKey, true,
 	         v->allowDot, v->allowMinus);
-	hints(c, &p, " A key  B delete  Y set  SEL cancel");
+#endif
+	hints(c, &p, H_VALUE_BAR);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1139,5 +1149,5 @@ void eqDraw(struct botCanvas* c, const struct topColors* col,
 		       eqButtons[i].label,
 		       v->pressed == id || v->focus == id ? BTN_FOCUS : BTN_NORMAL);
 	}
-	hints(c, &p, " \x1b\x1a pick  \x1e\x1f change  A zero  Y type");
+	hints(c, &p, H_EQ_BAR);
 }

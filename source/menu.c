@@ -13,6 +13,8 @@
  * menu opens, the page changes or the theme changes.
  */
 
+#include "keyhints.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -63,6 +65,7 @@ enum item_id
 	IT_TIME,
 	IT_ART,
 	IT_DISC,
+	IT_DISC_SYNC,
 	IT_DISC_SPEED,
 	IT_TITLES,
 	IT_SEEK,
@@ -73,6 +76,8 @@ enum item_id
 	IT_REFRESH,
 	IT_EXIT,
 	IT_EQ,
+	IT_ALLOW_REVERSE,
+	IT_DEMON,
 	IT_SPEED,
 	IT_DISTORTION,
 	IT_BITDEPTH,
@@ -123,13 +128,13 @@ struct page
 static const struct item mainItems[] =
 {
 	{ K_HEADER, IT_NONE, "PLAYBACK", NULL },
-	{ K_ITEM, IT_SHUFFLE, "Shuffle", "Random order. START works anywhere." },
+	{ K_ITEM, IT_SHUFFLE, "Shuffle", H_SHUFFLE },
 	{ K_ITEM, IT_REPEAT, "Repeat", "Off, the whole playlist, or one song." },
 	{ K_ITEM, IT_QUEUE, "Queue...", "Play, move or remove queued songs." },
 	{ K_ITEM, IT_SEARCH, "Search...", "Filenames here and in subfolders." },
 	{ K_ITEM, IT_EFFECTS, "Effects...", "Equalizer, speed, distortion, bitcrush..." },
 	{ K_HEADER, IT_NONE, "DISPLAY", NULL },
-	{ K_ITEM, IT_THEME, "Theme", "A: pick from a list. </>: cycle." },
+	{ K_ITEM, IT_THEME, "Theme", H_THEME },
 	{ K_ITEM, IT_THEME_EDIT, "Edit theme...",
 	  "Make your own colours (\"Custom\" theme)." },
 #ifndef PAPAYA_DESKTOP	/* no backlight control on the desktop */
@@ -141,12 +146,14 @@ static const struct item mainItems[] =
 	{ K_ITEM, IT_ART, "Cover art", "Placeholder: never load covers." },
 	{ K_ITEM, IT_DISC, "Spinning disc",
 	  "Round cover that spins while playing." },
+	{ K_ITEM, IT_DISC_SYNC, "Sync disc with playback",
+	  "Disc turns at the playback speed." },
 	{ K_SLIDER, IT_DISC_SPEED, "Disc speed",
 	  "How fast it turns (record speeds)." },
 	{ K_ITEM, IT_TITLES, "Titles in lists",
 	  "Queue/playlist: tag titles or files." },
 	{ K_HEADER, IT_NONE, "CONTROLS", NULL },
-	{ K_SLIDER, IT_SEEK, "Seek step", "How far ZL/ZR jump." },
+	{ K_SLIDER, IT_SEEK, "Seek step", H_SEEK },
 	{ K_HEADER, IT_NONE, "SYSTEM", NULL },
 	{ K_ITEM, IT_PERFORMANCE, "Performance mode",
 	  "Turns off tags, covers, reverb, disc." },
@@ -156,25 +163,29 @@ static const struct item mainItems[] =
 #endif
 	{ K_ITEM, IT_REFRESH, "Force refresh",
 	  "Re-reads this folder's song titles." },
-	{ K_ITEM, IT_EXIT, "Exit Papaya", "Quit (HOME > Close also works)." },
+	{ K_ITEM, IT_EXIT, "Exit Papaya", H_EXIT },
 };
 
 static const struct item effectsItems[] =
 {
 	{ K_ITEM, IT_EQ, "Equalizer...",
 	  "10 bands and a preamp (so it won't clip)." },
-	{ K_SLIDER, IT_SPEED, "Speed", "Changes pitch. A: 1.0x. Y: type value." },
+	{ K_ITEM, IT_ALLOW_REVERSE, "Allow reverse",
+	  "Speed can go down to -3.0x (plays backwards)." },
+	{ K_ITEM, IT_DEMON, "Demon mode",
+	  "Rainbow glitchy screens while in reverse." },
+	{ K_SLIDER, IT_SPEED, "Speed", H_SPEED },
 	{ K_SLIDER, IT_DISTORTION, "Distortion",
-	  "Soft clip. A: off. Y: type a value." },
+	  H_DISTORTION },
 	{ K_SLIDER, IT_BITDEPTH, "Bit depth",
-	  "Grittier. A: 32 bit. Y: type a value." },
+	  H_BITS },
 	{ K_SLIDER, IT_SAMPLERATE, "Sample rate",
-	  "Lo-fi. A: 32k (off). Y: type a value." },
+	  H_RATE },
 	{ K_SLIDER, IT_SPATIAL, "Spatial",
-	  "Wider stereo. A: off. Y: type a value." },
-	{ K_SLIDER, IT_REVERB, "Reverb", "Reverb amount. A: off. Y: type a value." },
+	  H_SPATIAL },
+	{ K_SLIDER, IT_REVERB, "Reverb", H_REVERB },
 	{ K_SLIDER, IT_REVERB_TIME, "Reverb time",
-	  "How long it rings out. Y: type a value." },
+	  H_REVERB_TIME },
 };
 
 #define TC_HELP "</> change, hold to run. Shown live."
@@ -238,6 +249,7 @@ static bool forced(enum item_id id)
 		return false;
 	return id == IT_ART || id == IT_TITLES ||
 	       id == IT_REVERB || id == IT_REVERB_TIME || id == IT_DISC ||
+	       id == IT_DISC_SYNC ||
 	       id == IT_DISC_SPEED;
 }
 
@@ -273,7 +285,8 @@ static int sliderSteps(enum item_id id)
 		return TC_STEPS;
 	switch(id)
 	{
-		case IT_SPEED:		return 30;		/* 0.1x .. 3.0x */
+		case IT_SPEED:		/* 0.1x .. 3.0x, or -3.0x .. 3.0x */
+			return getReverseAllowed() ? 61 : 30;
 		case IT_BRIGHTNESS:	return 5;
 		case IT_SEEK:		return SEEK_STEP_COUNT;
 		case IT_DISC_SPEED:	return DISC_SPEED_COUNT;
@@ -307,7 +320,9 @@ static int sliderIndexRaw(enum item_id id)
 	switch(id)
 	{
 		case IT_SPEED:
-			return (int)(getPlaybackSpeed() * 10.0f + 0.5f) - 1;
+			return getReverseAllowed() ?
+			       (int)lrintf(getPlaybackSpeed() * 10.0f) + 30 :
+			       (int)(getPlaybackSpeed() * 10.0f + 0.5f) - 1;
 		case IT_BRIGHTNESS:
 			return brightnessLevel() < 0 ? 2 : brightnessLevel() - 1;
 		case IT_SEEK:
@@ -380,8 +395,8 @@ static int sliderMoved(enum item_id id, int delta)
 			return tableMoved(rateSteps, RATE_STEPS, effectsSampleRate(),
 			                  delta);
 		case IT_SPEED:
-			v = (int)(getPlaybackSpeed() * 100.0f + 0.5f);
-			origin = 10;
+			v = (int)lrintf(getPlaybackSpeed() * 100.0f);
+			origin = getReverseAllowed() ? -300 : 10;
 			step = 10;
 			break;
 		case IT_DISTORTION:
@@ -443,7 +458,10 @@ static void sliderSet(enum item_id id, int idx)
 
 	switch(id)
 	{
-		case IT_SPEED:		setPlaybackSpeed((idx + 1) / 10.0f); break;
+		case IT_SPEED:
+			setPlaybackSpeed(getReverseAllowed() ? (idx - 30) / 10.0f :
+			                 (idx + 1) / 10.0f);
+			break;
 		case IT_BRIGHTNESS:	brightnessSetLevel(idx + 1); break;
 		case IT_SEEK:		settingsSetSeekStepIndex(idx); break;
 		case IT_DISC_SPEED:	settingsSetDiscSpeedIndex(idx); break;
@@ -512,6 +530,12 @@ static void valueText(enum item_id id, char* buf, size_t len)
 		case IT_DISC:
 			snprintf(buf, len, "%s", settingsSpinningDisc() ? "on" : "off");
 			break;
+		case IT_DISC_SYNC:
+			snprintf(buf, len, "%s", settingsDiscSync() ? "on" : "off");
+			break;
+		case IT_DEMON:
+			snprintf(buf, len, "%s", settingsDemonMode() ? "on" : "off");
+			break;
 		case IT_DISC_SPEED:
 			snprintf(buf, len, "%s", discSpeedStr(settingsDiscSpeedIndex()));
 			break;
@@ -542,6 +566,9 @@ static void valueText(enum item_id id, char* buf, size_t len)
 			else
 				snprintf(buf, len, "%s >",
 				         effectsEqPresetName(effectsEqCurrentPreset()));
+			break;
+		case IT_ALLOW_REVERSE:
+			snprintf(buf, len, "%s", settingsAllowReverse() ? "on" : "off");
 			break;
 		case IT_SPEED:
 			effectsFormatSpeed(buf, len, getPlaybackSpeed());
@@ -584,6 +611,42 @@ static void valueText(enum item_id id, char* buf, size_t len)
 /* ------------------------------------------------------------------ */
 
 static PrintConsole* console = NULL;
+
+#ifdef PAPAYA_DESKTOP
+/* macOS branch: the menu is laid out for 40x30 characters; in a bigger
+ * bottom screen it sits in a centred window of that size. */
+static void menuFullWindow(void)
+{
+	if(console == NULL)
+		return;
+	console->windowX = console->windowY = 0;
+	console->windowWidth = console->consoleWidth;
+	console->windowHeight = console->consoleHeight;
+}
+
+static void menuCenterWindow(void)
+{
+	if(console == NULL)
+		return;
+	console->windowWidth = 40;
+	console->windowHeight = 30;
+	console->windowX = console->consoleWidth > 40 ?
+	                   (console->consoleWidth - 40) / 2 : 0;
+	console->windowY = console->consoleHeight > 30 ?
+	                   (console->consoleHeight - 30) / 2 : 0;
+}
+
+/* Clear everything around the menu too, then centre the window again. */
+static void menuClearAll(void)
+{
+	menuFullWindow();
+	consoleClear();
+	menuCenterWindow();
+}
+#else
+#define menuCenterWindow()	((void)0)
+#define menuClearAll()		consoleClear()
+#endif
 static struct screens* menuScreens = NULL;	/* for the live theme editor */
 
 static void moveTo(int row, int col)
@@ -742,9 +805,9 @@ static void drawThemes(const struct menu* m)
 	}
 
 	setColors(&t->textInactive, &t->bg);
-	fullRow(HELP_ROW, " Y: try it on. A: use it. B: cancel.");
+	fullRow(HELP_ROW, H_PICK_HELP);
 	setColors(&t->bg, &t->textInactive);
-	fullRow(HINT_ROW, " A use  Y preview  B cancel  stylus");
+	fullRow(HINT_ROW, H_PICK_HINT);
 	themeSetActiveColor();
 }
 
@@ -863,7 +926,7 @@ static void drawMenu(struct menu* m)
 	consoleSelect(console);
 	layout(p, rows);
 	if(ensureVisible(m, rows))
-		consoleClear();		/* the rows moved: no leftovers */
+		menuClearAll();		/* the rows moved: no leftovers */
 	drawTitle(p->title);
 
 	for(int k = 0; k < n; k++)
@@ -920,8 +983,8 @@ static void drawMenu(struct menu* m)
 	/* Key hints */
 	setColors(&t->bg, &t->textInactive);
 	fullRow(HINT_ROW, m->page == PAGE_MAIN ?
-	        " A select  B close  </> change  stylus" :
-	        " A select  B back  </> change  stylus");
+	        H_MENU_MAIN :
+	        H_MENU_SUB);
 
 	themeSetActiveColor();
 
@@ -932,13 +995,14 @@ static void drawMenu(struct menu* m)
 static void clearAndDraw(struct menu* m)
 {
 	consoleSelect(console);
-	consoleClear();
+	menuClearAll();
 	drawMenu(m);
 }
 
 void menuRedraw(struct menu* m, struct screens* s)
 {
 	console = &s->bottom;
+	menuCenterWindow();
 	drawMenu(m);
 }
 
@@ -1083,6 +1147,18 @@ static void change(struct menu* m, struct screens* s, enum item_id id,
 			settingsSetSpinningDisc(!settingsSpinningDisc());
 			break;
 
+		case IT_DISC_SYNC:
+			settingsSetDiscSync(!settingsDiscSync());
+			break;
+
+		case IT_DEMON:
+			settingsSetDemonMode(!settingsDemonMode());
+			break;
+
+		case IT_ALLOW_REVERSE:
+			settingsSetAllowReverse(!settingsAllowReverse());
+			break;
+
 		case IT_PERFORMANCE:
 			/* The cover art is dropped or loaded here. Folders skip/load tags from the
 			 * next one opened. */
@@ -1223,7 +1299,7 @@ static void touch(struct menu* m, u32 kDown)
 			{
 				uiApplyTheme(menuScreens, getCurrentTheme());
 				consoleSelect(console);
-				consoleClear();
+				menuClearAll();
 			}
 			uiRequestRedraw();
 			redraw = true;
@@ -1349,6 +1425,7 @@ enum menu_result menuHandleInput(struct menu* m, u32 kDown, u32 kHeld,
 
 	console = &s->bottom;
 	menuScreens = s;
+	menuCenterWindow();
 
 	if(m->picking)
 		return themesInput(m, kDown, dirs, s, b);
@@ -1408,4 +1485,36 @@ enum menu_result menuHandleInput(struct menu* m, u32 kDown, u32 kHeld,
 int menuValueTarget(const struct menu* m)
 {
 	return m->entry;
+}
+
+/* macOS branch: which item a click landed on (see menu.h). */
+int menuRowAt(const struct menu* m, int px, int py)
+{
+	const struct page*	p = curPage(m);
+	int					rows[MAX_ITEMS];
+	int					row = py / 8, col = px / 8;
+
+	if(m->picking)
+		return -1;
+	layout(p, rows);
+	for(int k = 0; k < p->count && k < MAX_ITEMS; k++)
+	{
+		if(rows[k] - m->scroll != row || p->items[k].kind == K_HEADER)
+			continue;
+		if(p->items[k].kind == K_SLIDER && col >= SLIDER_COL - 1 &&
+		   col <= SLIDER_COL + SLIDER_W)
+			return -1;
+		return k;
+	}
+	return -1;
+}
+
+/* macOS branch: see menu.h. */
+bool menuActivateIsType(const struct menu* m)
+{
+	const struct page*	p = curPage(m);
+	enum item_id		id = p->items[m->selected].id;
+
+	return p->items[m->selected].kind == K_SLIDER &&
+	       valueTargetOf(id) >= 0 && !forced(id);
 }

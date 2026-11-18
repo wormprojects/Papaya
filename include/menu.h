@@ -48,6 +48,14 @@ enum menu_result
 	MENU_EQ			/* open the equalizer page */
 };
 
+/** macOS branch: the item under pixel (px, py) of the bottom screen if it
+ * is one a click may activate (not a header, not a slider's track), else -1. */
+int menuRowAt(const struct menu* m, int px, int py);
+
+/** macOS branch: activating the selected item should open the value entry
+ * (an effect slider) instead of pressing A (which resets it). */
+bool menuActivateIsType(const struct menu* m);
+
 /** Which effect the value entry should edit after MENU_VALUE (an
  * enum valueTarget from valueentry.h). */
 int menuValueTarget(const struct menu* m);

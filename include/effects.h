@@ -51,6 +51,7 @@
 #ifndef ctrmus_effects_h
 #define ctrmus_effects_h
 
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -132,12 +133,13 @@ int effectsReverbActiveMix(void);
  * values; the slider steps by 0.1). */
 static inline void effectsFormatSpeed(char* buf, size_t len, float speed)
 {
-	int h = (int)(speed * 100.0f + 0.5f);
+	int h = (int)(fabsf(speed) * 100.0f + 0.5f);
+	const char* sign = (speed < 0.0f && h > 0) ? "-" : "";
 
 	if(h % 10 == 0)
-		snprintf(buf, len, "%d.%dx", h / 100, (h / 10) % 10);
+		snprintf(buf, len, "%s%d.%dx", sign, h / 100, (h / 10) % 10);
 	else
-		snprintf(buf, len, "%d.%02dx", h / 100, h % 100);
+		snprintf(buf, len, "%s%d.%02dx", sign, h / 100, h % 100);
 }
 
 /** "32k", "1.5k", or "750 Hz" / "22050 Hz" for the rest. */

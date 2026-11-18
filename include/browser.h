@@ -27,7 +27,14 @@
  * the folder doesn't fit, the last column is a scrollbar (drag it with
  * the stylus).
  */
+#ifdef PAPAYA_DESKTOP
+/* macOS branch: the bottom screen resizes, so the list is as tall as the
+ * console is (browserSetSize). 28 is the 3DS's. */
+extern int browserListRows;
+#define	MAX_LIST		browserListRows
+#else
 #define	MAX_LIST		28
+#endif
 
 /* Arbitrary cap for number of stored parent positions in folder to avoid
  * unbounded memory consumption. If directories are added exceeding this,
@@ -53,6 +60,7 @@ struct browser
 	int					queueCount;		/* shown on the "queue" button */
 	/* Columns of the bottom bar's buttons, [from, to), as last drawn */
 	int					findCol0, findCol1, queueCol0, queueCol1;
+	int					menuCol0, menuCol1;	/* macOS branch: " menu " button */
 };
 
 /* What's under the stylus on the bottom bar (browserFooterButtonAt) */
@@ -60,6 +68,7 @@ enum browser_button
 {
 	BROWSER_BTN_NONE,
 	BROWSER_BTN_FIND,
+	BROWSER_BTN_MENU,		/* macOS branch: opens the menu */
 	BROWSER_BTN_QUEUE
 };
 
@@ -117,6 +126,18 @@ int browserShowFile(struct browser* b, const char* dir, const char* name,
 eturn	true if the list moved (and was redrawn).
  */
 bool browserTouch(struct browser* b, u32 kDown, u32 kHeld);
+
+/** macOS branch: the bottom screen is now cols x rows characters (at least
+ * 40 x 30): the list gets rows - 2 rows and the names the width. Redraws. */
+void browserSetSize(struct browser* b, int cols, int rows);
+
+/** macOS branch: scroll the list by `rows` (wheel); the cursor stays on its
+ * entry unless that leaves the screen. Returns true if the view moved. */
+bool browserScrollBy(struct browser* b, int rows);
+
+/** macOS branch: the list entry (cursor index space) shown under the pixel
+ * (px, py) of the bottom screen, or -1 (bars, scrollbar, empty space). */
+int browserRowAt(const struct browser* b, int px, int py);
 
 /**
  * Apply background metadata results. Keeps the cursor on the same file if

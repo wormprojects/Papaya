@@ -13,6 +13,7 @@
 #include "mp3.h"
 #include "opus.h"
 #include "playback.h"
+#include "reverse.h"
 #include "vorbis.h"
 #include "wav.h"
 #include "sid.h"
@@ -25,6 +26,50 @@ static volatile bool stop = true;
 static int32_t seekRequest = 0;
 static volatile float playbackSpeed = 1.0f;
 static volatile uint32_t baseRate = 0;  /* Original sample rate (Hz) */
+static volatile bool reverseAllowed = false;
+static volatile bool zeroPaused = false;	/* paused by speed 0.0 */
+static volatile bool reachedStart = false;	/* reverse ran out of song */
+
+/**
+ * Push the current speed to the ndsp channel. The channel's rate must stay
+ * positive: the sign (direction) is handled by the playback loop, and 0.0
+ * pauses the channel instead.
+ */
+static void applySpeed(void)
+{
+	float s = fabsf(playbackSpeed);
+
+	if(stop || baseRate == 0)
+		return;
+
+	if(s < 0.05f)
+	{
+		if(!ndspChnIsPaused(CHANNEL))
+		{
+			ndspChnSetPaused(CHANNEL, true);
+			zeroPaused = true;
+		}
+		return;
+	}
+
+	ndspChnSetRate(CHANNEL, (float)baseRate * s);
+	if(zeroPaused)
+	{
+		zeroPaused = false;
+		ndspChnSetPaused(CHANNEL, false);
+	}
+}
+
+/* A block finished playing: the position moves by its length, backwards
+ * when reversed (never below 0). */
+static void advancePlayed(struct playbackInfo_t* info, size_t n, bool rev)
+{
+	if(!rev)
+		info->samples_played += n;
+	else
+		info->samples_played = info->samples_played > n ?
+		                       info->samples_played - n : 0;
+}
 
 /**
  * Pause or play current file.
@@ -36,6 +81,13 @@ bool togglePlayback(void)
 	bool paused = ndspChnIsPaused(CHANNEL);
 	ndspChnSetPaused(CHANNEL, !paused);
 	return !paused;
+}
+
+/* The next block of audio: forwards, or backwards (reverse.h). */
+static size_t fillBlock(struct decoder_fn* dec, int16_t* buf, bool rev,
+                        struct reverseState* rs)
+{
+	return rev ? reverseFill(dec, buf, rs) : (*dec->decode)(buf);
 }
 
 /**
@@ -69,12 +121,37 @@ void requestSeek(int64_t deltaSamples)
  */
 void setPlaybackSpeed(float speed)
 {
-	if(speed < 0.1f) speed = 0.1f;
+	if(reverseAllowed)
+	{
+		if(speed < -3.0f) speed = -3.0f;
+		/* Tiny values are 0.0 (paused). */
+		if(fabsf(speed) < 0.05f) speed = 0.0f;
+	}
+	else if(speed < 0.1f)
+		speed = 0.1f;
 	if(speed > 3.0f) speed = 3.0f;
 	playbackSpeed = speed;
+	applySpeed();
+}
 
-	if(!stop && baseRate > 0)
-		ndspChnSetRate(CHANNEL, (float)baseRate * speed);
+void setReverseAllowed(bool allowed)
+{
+	reverseAllowed = allowed;
+	if(!allowed && playbackSpeed < 0.1f)
+		setPlaybackSpeed(1.0f);
+}
+
+bool getReverseAllowed(void)
+{
+	return reverseAllowed;
+}
+
+bool playbackTakeReachedStart(void)
+{
+	bool r = reachedStart;
+
+	reachedStart = false;
+	return r;
 }
 
 /**
@@ -116,9 +193,14 @@ void playFile(void* infoIn)
 	int				ret = -1;
 	const char*		file = info->file;
 	bool			isNdspInit = false;
+	bool			rev = false;		/* playing backwards */
+	bool			canRev = false;
+	struct reverseState	rs = { 0, 0 };	/* where the next backwards block is */
 
 	/* Reset previous stop command and any seek meant for the last song */
 	stop = false;
+	reachedStart = false;
+	zeroPaused = false;
 	__atomic_store_n(&seekRequest, 0, __ATOMIC_SEQ_CST);
 
 	switch(getFileType(file))
@@ -178,6 +260,20 @@ void playFile(void* infoIn)
 	if(decoder.getFileSamples != NULL)
 		info->samples_total = decoder.getFileSamples();
 
+	/* Backwards needs to seek and to know where the end is. */
+	canRev = decoder.seek != NULL && info->samples_total > 0;
+	rev = canRev && playbackSpeed < 0.0f;
+	if(rev)
+	{
+		size_t exact = reversePrepare(&decoder);
+
+		if(exact > 0)
+			info->samples_total = exact;
+		/* Starts at the end (e.g. the previous song, played backwards). */
+		rs.pos = (int64_t)info->samples_total;
+		info->samples_played = info->samples_total;
+	}
+
 	info->samples_per_second = decoder.rate() * decoder.channels();
 	buffer1 = linearAlloc(decoder.buffSize * sizeof(int16_t));
 	buffer2 = linearAlloc(decoder.buffSize * sizeof(int16_t));
@@ -187,7 +283,9 @@ void playFile(void* infoIn)
 	ndspChnWaveBufClear(CHANNEL);
 	ndspSetOutputMode(NDSP_OUTPUT_STEREO);
 	ndspChnSetInterp(CHANNEL, NDSP_INTERP_POLYPHASE);
-	ndspChnSetRate(CHANNEL, (float)baseRate * playbackSpeed);
+	ndspChnSetRate(CHANNEL, (float)baseRate *
+	               (fabsf(playbackSpeed) < 0.05f ? 1.0f :
+	                fabsf(playbackSpeed)));
 	ndspChnSetFormat(CHANNEL,
 			(*decoder.channels)() == 2 ? NDSP_FORMAT_STEREO_PCM16 :
 			NDSP_FORMAT_MONO_PCM16);
@@ -195,10 +293,12 @@ void playFile(void* infoIn)
 	effectsStart(baseRate, (*decoder.channels)());
 
 	memset(waveBuf, 0, sizeof(waveBuf));
-	waveBuf[0].nsamples = (*decoder.decode)(&buffer1[0]) / (*decoder.channels)();
+	waveBuf[0].nsamples = fillBlock(&decoder, &buffer1[0], rev, &rs) /
+	                      (*decoder.channels)();
 	waveBuf[0].data_vaddr = &buffer1[0];
 
-	waveBuf[1].nsamples = (*decoder.decode)(&buffer2[0]) / (*decoder.channels)();
+	waveBuf[1].nsamples = fillBlock(&decoder, &buffer2[0], rev, &rs) /
+	                      (*decoder.channels)();
 	waveBuf[1].data_vaddr = &buffer2[0];
 
 	/* Distortion/reverb (effects.h). */
@@ -217,6 +317,8 @@ void playFile(void* infoIn)
 	 */
 	while(ndspChnIsPlaying(CHANNEL) == false);
 
+	applySpeed();		/* a speed of 0.0 starts paused */
+
 	while(stop == false)
 	{
 		/* 1 ms: each buffer holds 0.18-0.4 s of audio, so this is plenty.
@@ -227,17 +329,43 @@ void playFile(void* infoIn)
 		/* When the last buffer has finished playing, break. */
 		if(lastbuf == true && waveBuf[0].status == NDSP_WBUF_DONE &&
 				waveBuf[1].status == NDSP_WBUF_DONE)
+		{
+			/* Backwards, that was the start of the song. */
+			reachedStart = rev;
 			break;
+		}
+
+		/* Speed 0.0 holds the song (the pause button can't undo it). */
+		if(playbackSpeed == 0.0f && !ndspChnIsPaused(CHANNEL))
+		{
+			ndspChnSetPaused(CHANNEL, true);
+			zeroPaused = true;
+		}
 
 		if(ndspChnIsPaused(CHANNEL) == true || lastbuf == true)
 			continue;
 
+		/* The sign of the speed flipped: carry on from here the other
+		 * way (handled like a seek by 0). */
+		bool wantRev = canRev && (playbackSpeed < 0.0f ||
+		                          (playbackSpeed == 0.0f && rev));
+		bool dirChange = wantRev != rev;
+
 		/* Handle seek request */
-		if(__atomic_load_n(&seekRequest, __ATOMIC_SEQ_CST) != 0 &&
-		   decoder.seek != NULL)
+		if((__atomic_load_n(&seekRequest, __ATOMIC_SEQ_CST) != 0 ||
+		    dirChange) && decoder.seek != NULL)
 		{
 			int64_t delta = __atomic_exchange_n(&seekRequest, 0,
 			                                    __ATOMIC_SEQ_CST);
+
+			if(wantRev && !rev)
+			{
+				size_t exact = reversePrepare(&decoder);
+
+				if(exact > 0)
+					info->samples_total = exact;
+			}
+			rev = wantRev;
 
 			/* Calculate target sample position */
 			int64_t currentPos = (int64_t)info->samples_played;
@@ -251,12 +379,14 @@ void playFile(void* infoIn)
 			if(decoder.getFileSamples != NULL)
 			{
 				int64_t total = (int64_t)decoder.getFileSamples();
-				if(total > 0 && targetPos >= total)
+				if(delta > 0 && total > 0 && targetPos >= total)
 					break;
 			}
 
-			if(decoder.seek((size_t)targetPos) == 0)
+			if(rev || decoder.seek((size_t)targetPos) == 0)
 			{
+				rs.pos = targetPos;
+
 				/* Pause channel briefly, clear pending buffers, refill */
 				ndspChnSetPaused(CHANNEL, true);
 				ndspChnWaveBufClear(CHANNEL);
@@ -266,9 +396,9 @@ void playFile(void* infoIn)
 
 				/* Re-fill both buffers */
 				memset(waveBuf, 0, sizeof(waveBuf));
-				waveBuf[0].nsamples = (*decoder.decode)(&buffer1[0]) / (*decoder.channels)();
+				waveBuf[0].nsamples = fillBlock(&decoder, &buffer1[0], rev, &rs) / (*decoder.channels)();
 				waveBuf[0].data_vaddr = &buffer1[0];
-				waveBuf[1].nsamples = (*decoder.decode)(&buffer2[0]) / (*decoder.channels)();
+				waveBuf[1].nsamples = fillBlock(&decoder, &buffer2[0], rev, &rs) / (*decoder.channels)();
 				waveBuf[1].data_vaddr = &buffer2[0];
 
 				effectsProcess(buffer1, waveBuf[0].nsamples);
@@ -285,6 +415,7 @@ void playFile(void* infoIn)
 				if(waveBuf[0].nsamples == 0)
 				{
 					ndspChnSetPaused(CHANNEL, false);
+					reachedStart = rev;
 					break;
 				}
 				ndspChnWaveBufAdd(CHANNEL, &waveBuf[0]);
@@ -309,17 +440,18 @@ void playFile(void* infoIn)
 
 		if(waveBuf[0].status == NDSP_WBUF_DONE)
 		{
-			size_t read = (*decoder.decode)(&buffer1[0]);
+			size_t read = fillBlock(&decoder, &buffer1[0], rev, &rs);
 			/* The previous block of samples have finished playing,
 			 * so accumulate them here. */
-			info->samples_played += waveBuf[0].nsamples * decoder.channels();
+			advancePlayed(info, waveBuf[0].nsamples * decoder.channels(),
+			              rev);
 
 			if(read <= 0)
 			{
 				lastbuf = true;
 				continue;
 			}
-			else if(read < decoder.buffSize)
+			else if(read / (*decoder.channels)() != waveBuf[0].nsamples)
 				waveBuf[0].nsamples = read / (*decoder.channels)();
 
 			effectsProcess(buffer1, read / (*decoder.channels)());
@@ -328,15 +460,16 @@ void playFile(void* infoIn)
 
 		if(waveBuf[1].status == NDSP_WBUF_DONE)
 		{
-			size_t read = (*decoder.decode)(&buffer2[0]);
-			info->samples_played += waveBuf[1].nsamples * decoder.channels();
+			size_t read = fillBlock(&decoder, &buffer2[0], rev, &rs);
+			advancePlayed(info, waveBuf[1].nsamples * decoder.channels(),
+			              rev);
 
 			if(read <= 0)
 			{
 				lastbuf = true;
 				continue;
 			}
-			else if(read < decoder.buffSize)
+			else if(read / (*decoder.channels)() != waveBuf[1].nsamples)
 				waveBuf[1].nsamples = read / (*decoder.channels)();
 
 			effectsProcess(buffer2, read / (*decoder.channels)());
@@ -347,8 +480,11 @@ void playFile(void* infoIn)
 		DSP_FlushDataCache(buffer2, decoder.buffSize * sizeof(int16_t));
 	}
 
-	info->samples_played += waveBuf[0].nsamples * decoder.channels();
-	info->samples_played += waveBuf[0].nsamples * decoder.channels();
+	if(!rev)
+	{
+		info->samples_played += waveBuf[0].nsamples * decoder.channels();
+		info->samples_played += waveBuf[0].nsamples * decoder.channels();
+	}
 
 	(*decoder.exit)();
 out:

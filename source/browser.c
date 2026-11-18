@@ -48,7 +48,15 @@ void browserExit(struct browser* b)
 /* Drawing                                                             */
 /* ------------------------------------------------------------------ */
 
+#ifdef PAPAYA_DESKTOP
+int			browserListRows = 28;
+static int	browserCols = 40;
+#define CON_COLS		browserCols
+#define LINE_MAX_CHARS	512
+#else
 #define CON_COLS		40
+#define LINE_MAX_CHARS	(CON_COLS + 1)
+#endif
 #define FOOTER_ROW		(MAX_LIST + 1)		/* 0-based console row */
 /* A stylus drag starting this far right (pixels) grabs the scrollbar:
  * wider than the 8px bar itself, so it's easy to hit. */
@@ -75,7 +83,7 @@ static void drawBar(int row, const char* tag, const char* path,
                     const struct themeColor* bar, int reserve)
 {
 	const struct theme_t*	t = getCurrentTheme();
-	char					line[CON_COLS + 1];
+	char					line[LINE_MAX_CHARS + 1];
 	int						avail, len, n;
 
 	if(path == NULL)
@@ -124,8 +132,22 @@ static void drawFooter(struct browser* b)
 	b->queueCol0 = CON_COLS - qlen;
 	b->findCol1 = b->queueCol0 - 1;
 	b->findCol0 = b->findCol1 - 6;
+#ifdef PAPAYA_DESKTOP
+	/* No SELECT key to point at on the desktop: a clickable " menu " */
+	b->menuCol1 = b->findCol0 - 1;
+	b->menuCol0 = b->menuCol1 - 6;
+	drawBar(FOOTER_ROW, "p>", b->playlistDir, &t->textInactive,
+	        CON_COLS - b->menuCol0);
+
+	moveTo(FOOTER_ROW, b->menuCol0);
+	setColors(&t->bg, &t->highlight);
+	printf(" menu ");
+	setColors(&t->bg, &t->textInactive);
+	printf(" ");
+#else
 	drawBar(FOOTER_ROW, "p>", b->playlistDir, &t->textInactive,
 	        CON_COLS - b->findCol0);
+#endif
 
 	col = b->findCol0;
 	moveTo(FOOTER_ROW, col);
@@ -159,6 +181,10 @@ enum browser_button browserFooterButtonAt(const struct browser* b, int x,
 		return BROWSER_BTN_NONE;
 	if(col >= b->findCol0 && col < b->findCol1)
 		return BROWSER_BTN_FIND;
+#ifdef PAPAYA_DESKTOP
+	if(col >= b->menuCol0 && col < b->menuCol1)
+		return BROWSER_BTN_MENU;
+#endif
 	if(col >= b->queueCol0 && col < b->queueCol1)
 		return BROWSER_BTN_QUEUE;
 	return BROWSER_BTN_NONE;
@@ -303,12 +329,19 @@ void browserDraw(struct browser* b)
 		return;
 
 	consoleSelect(b->console);
+#ifdef PAPAYA_DESKTOP
+	/* The menu draws in a centred 40x30 window; the list uses all of it. */
+	b->console->windowX = b->console->windowY = 0;
+	b->console->windowWidth = b->console->consoleWidth;
+	b->console->windowHeight = b->console->consoleHeight;
+#endif
 	bar = needsScrollbar(b);
 
 	drawBar(0, "c>", b->list.currentDir, &getCurrentTheme()->highlight, 0);
 
 	/* With a scrollbar, names stop two columns short of it. */
-	listed = listDir(b->from, MAX_LIST, b->cursor, &b->list, bar ? 36 : 37);
+	listed = listDir(b->from, MAX_LIST, b->cursor, &b->list,
+	                 bar ? CON_COLS - 4 : CON_COLS - 3);
 	if(listed < 0)
 		err_print("Unable to list directory.");
 
@@ -724,3 +757,77 @@ void browserSelectFile(struct browser* b, int idx)
 	if(b->cursor < first || b->cursor > last)
 		b->from = b->cursor < MAX_LIST ? 0 : b->cursor - MAX_LIST + 1;
 }
+
+/* macOS branch: wheel / trackpad scrolling. Moves the view by `rows` list
+ * rows without moving the cursor; if the cursor would leave the screen it
+ * is held at the nearest visible row. (`from` is odd, see listDir(): 0 shows
+ * rows 0.., k shows k+1.., so the first step down from 0 hides two.) */
+bool browserScrollBy(struct browser* b, int rows)
+{
+	int from = b->from + rows;
+	int maxFrom = b->count - MAX_LIST;
+	int first, last;
+
+	if(b->hidden || rows == 0)
+		return false;
+	if(maxFrom < 0)
+		maxFrom = 0;
+	if(from > maxFrom)
+		from = maxFrom;
+	if(from < 0)
+		from = 0;
+	if(from == b->from)
+		return false;
+
+	b->from = from;
+	first = topRow(b);
+	last = first + MAX_LIST - 1;
+	if(b->cursor < first)
+		b->cursor = first;
+	if(b->cursor > last)
+		b->cursor = last;
+	if(b->cursor > b->count)
+		b->cursor = b->count;
+	browserDraw(b);
+	return true;
+}
+
+/* macOS branch: which entry a click landed on. */
+int browserRowAt(const struct browser* b, int px, int py)
+{
+	int row = py / 8, idx;
+
+	if(b->hidden || row < 1 || row > MAX_LIST)
+		return -1;
+	if(needsScrollbar(b) && px >= SCROLL_TOUCH_X)
+		return -1;
+	idx = topRow(b) + (row - 1);
+	return idx <= b->count ? idx : -1;
+}
+
+#ifdef PAPAYA_DESKTOP
+/* macOS branch: the bottom screen was resized. */
+void browserSetSize(struct browser* b, int cols, int rows)
+{
+	int maxFrom, first, last;
+
+	browserCols = cols < 40 ? 40 : cols > LINE_MAX_CHARS ? LINE_MAX_CHARS : cols;
+	browserListRows = (rows < 30 ? 30 : rows) - 2;
+
+	/* Keep the cursor on screen with the new row count. */
+	maxFrom = b->count - MAX_LIST;
+	if(maxFrom < 0)
+		maxFrom = 0;
+	if(b->from > maxFrom)
+		b->from = maxFrom;
+	first = topRow(b);
+	last = first + MAX_LIST - 1;
+	if(b->cursor < first && b->count > 0)
+		b->from = b->cursor <= 1 ? 0 : b->cursor - 1;
+	else if(b->cursor > last)
+		b->from = b->cursor - MAX_LIST;
+	if(b->from < 0)
+		b->from = 0;
+	browserDraw(b);
+}
+#endif

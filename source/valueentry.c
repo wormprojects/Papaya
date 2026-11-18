@@ -55,6 +55,16 @@ static const struct target* targetOf(enum valueTarget t)
 	static char				name[24];
 	int						hz;
 
+	if(t == VT_SPEED)
+	{
+		/* The lowest speed depends on "Allow reverse". */
+		static struct target speedT;
+
+		speedT = targets[VT_SPEED];
+		if(getReverseAllowed())
+			speedT.min = -3.0;
+		return &speedT;
+	}
 	if(!isEqBand(t))
 		return &targets[t];
 	hz = effectsEqFreq(t - VT_EQ_BAND0);
@@ -323,6 +333,19 @@ enum page_result valueEntryInput(struct valueEntry* s, u32 kDown, u32 kHeld)
 	                                     KEY_A | KEY_B);
 	enum page_result	r;
 
+#ifdef PAPAYA_DESKTOP
+	/* The real keyboard: digits, '.', '-', Backspace, Return = set. */
+	{
+		int ch;
+
+		while((ch = macTypedChar()) != 0)
+		{
+			if(ch == '\n')
+				return finish(s, true);
+			pressKey(s, ch);
+		}
+	}
+#endif
 	if(kDown & KEY_SELECT)
 		return finish(s, false);
 	if((r = touchInput(s, kDown, kHeld)) != PAGE_STAY)

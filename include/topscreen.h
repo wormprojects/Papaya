@@ -28,7 +28,22 @@
 #define TOP_ART_COLS	(TOP_ART_SIZE + 2)
 
 /* Spinning disc: rotation steps per turn (a multiple of 4). */
+#ifndef TOP_DISC_STEPS
 #define TOP_DISC_STEPS	64
+#endif
+
+/**
+ * macOS branch: lay the screen out for a canvas of w x h pixels (the 3DS is
+ * always 400x240, which is also what 0, 0 means). Call before drawing and
+ * whenever the size changes; the canvas pixels must be h * w (column-major,
+ * column stride h). Header, columns and footer stay at their edges and the
+ * art block stays centred.
+ */
+void topSetSize(int w, int h);
+int topWidth(void);
+int topHeight(void);
+/** First column of the art frame now (TOP_ART_COL0 on a 400-wide canvas). */
+int topArtCol0(void);
 
 /**
  * Canvas in the 3DS framebuffer layout: column-major, TOP_H pixels per
@@ -58,7 +73,9 @@ enum npRepeat
 	NP_REPEAT_ONE
 };
 
+#ifndef NP_MAX_LIST
 #define NP_MAX_LIST		24
+#endif
 
 /* npView.brightnessPct for a device with no brightness control */
 #define NP_NO_BRIGHTNESS	(-2)

@@ -30,6 +30,9 @@ static int						seekStepIdx = 2;	/* 15 s */
 static bool						listTitles = true;
 static bool						performance = false;
 static bool						spinningDisc = false;
+static bool						allowReverse = false;
+static bool						discSync = false;
+static bool						demonMode = false;
 static int						discSpeedIdx = 2;	/* 33 1/3 rpm */
 
 /* Record speeds: what the file says, ms per turn, and the label. */
@@ -111,6 +114,12 @@ void settingsInit(void)
 				performance = v != 0;
 			else if(sscanf(line, " spinning_disc = %d", &v) == 1)
 				spinningDisc = v != 0;
+			else if(sscanf(line, " allow_reverse = %d", &v) == 1)
+				allowReverse = v != 0;
+			else if(sscanf(line, " disc_sync = %d", &v) == 1)
+				discSync = v != 0;
+			else if(sscanf(line, " demon_mode = %d", &v) == 1)
+				demonMode = v != 0;
 			else if(sscanf(line, " disc_speed = %d", &v) == 1)
 			{
 				for(int i = 0; i < DISC_SPEED_COUNT; i++)
@@ -128,6 +137,7 @@ void settingsInit(void)
 	}
 
 	applyFastMode();
+	setReverseAllowed(allowReverse);
 	effectsSetReverbAllowed(!performance);
 }
 
@@ -168,12 +178,22 @@ void settingsSaveIfChanged(void)
 	        "(1 = on)\n"
 	        "spinning_disc = %d\n"
 	        "# disc_speed: rpm (8, 16, 33, 45 or 78)\n"
-	        "disc_speed = %d\n",
+	        "disc_speed = %d\n"
+	        "# allow_reverse: speed can go negative, playing backwards "
+	        "(1 = on)\n"
+	        "allow_reverse = %d\n"
+	        "# disc_sync: the spinning disc turns at the playback speed "
+	        "(1 = on)\n"
+	        "disc_sync = %d\n"
+	        "# demon_mode: rainbow glitchy screens while playing in reverse "
+	        "(1 = on)\n"
+	        "demon_mode = %d\n",
 	        fastMode ? 1 : 0, (int)filenameArtists,
 	        timeRemaining ? 1 : 0, placeholderArt ? 1 : 0,
 	        seekSteps[seekStepIdx], listTitles ? 1 : 0,
 	        performance ? 1 : 0, spinningDisc ? 1 : 0,
-	        discRpm[discSpeedIdx]);
+	        discRpm[discSpeedIdx], allowReverse ? 1 : 0, discSync ? 1 : 0,
+	        demonMode ? 1 : 0);
 	if(n > 0 && n < (int)sizeof(text))
 		saverWrite(SETTINGS_PATH, dirs, text, (size_t)n);
 	unsaved = false;
@@ -337,6 +357,46 @@ void settingsSetSpinningDisc(bool on)
 	if(on == spinningDisc)
 		return;
 	spinningDisc = on;
+	unsaved = true;
+}
+
+bool settingsDiscSync(void)
+{
+	return discSync;
+}
+
+void settingsSetDiscSync(bool on)
+{
+	if(on == discSync)
+		return;
+	discSync = on;
+	unsaved = true;
+}
+
+bool settingsDemonMode(void)
+{
+	return demonMode;
+}
+
+void settingsSetDemonMode(bool on)
+{
+	if(on == demonMode)
+		return;
+	demonMode = on;
+	unsaved = true;
+}
+
+bool settingsAllowReverse(void)
+{
+	return allowReverse;
+}
+
+void settingsSetAllowReverse(bool on)
+{
+	if(on == allowReverse)
+		return;
+	allowReverse = on;
+	setReverseAllowed(on);
 	unsaved = true;
 }
 

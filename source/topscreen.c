@@ -32,20 +32,42 @@
 
 #define HEADER_Y	1
 
+/*
+ * Layout size. 400x240 (the 3DS top screen) unless the macOS branch calls
+ * topSetSize(): the canvas then grows, and everything stays anchored where
+ * it was: header, columns and footer to their edges/corners, the art block
+ * to the centre. (LW/LH are used where the old code said TOP_W/TOP_H.)
+ */
+static int layoutW = TOP_W, layoutH = TOP_H;
+#define LW		layoutW
+#define LH		layoutH
+
+void topSetSize(int w, int h)
+{
+	layoutW = w > 0 ? w : TOP_W;
+	layoutH = h > 0 ? h : TOP_H;
+}
+int topWidth(void)	{ return layoutW; }
+int topHeight(void)	{ return layoutH; }
+
 #define LCOL_X		2
-#define RCOL_X		278
+#define RCOL_X		(LW - 122)		/* 278 on 400 wide */
 #define COL_CHARS	15
 #define COL_TOP		13
-#define COL_YMAX	228	/* text in the side columns must end above this */
+#define COL_YMAX	(LH - 12)		/* text in the side columns must end above this */
 
-#define ART_FX		TOP_ART_COL0	/* art frame (1px around ART_IN) */
-#define ART_FY		12
+#define ART_DX		((LW - TOP_W) / 2)		/* the art block stays centred */
+#define ART_DY		((LH - TOP_H) / 2)
+#define ART_FX		(TOP_ART_COL0 + ART_DX)	/* art frame (1px around ART_IN) */
+#define ART_FY		(12 + ART_DY)
 #define ART_IN		TOP_ART_SIZE
 #define ART_FW		(ART_IN + 2)
 
-#define TITLE_Y		160
-#define SUB_Y		170
-#define VOL_Y		220
+#define TITLE_Y		(160 + ART_DY)
+#define SUB_Y		(170 + ART_DY)
+#define VOL_Y		(LH - 20)
+
+int topArtCol0(void)	{ return ART_FX; }
 
 /*
  * Long title/subtitle lines scroll like a CD player display: hold at the
@@ -62,10 +84,10 @@
 #define HEADER_H			(CH + 5)	/* header text + underline + gap */
 #define CENTER_CHARS (ART_FW / CH)
 
-#define FOOT_Y		232
+#define FOOT_Y		(LH - 8)
 #define BAR_X		108
-#define BAR_W		184
-#define BAR_Y		231
+#define BAR_W		(LW - 216)	/* 184 on 400 wide: grows with the window */
+#define BAR_Y		(LH - 9)
 #define BAR_H		9
 
 /* 8x8 icons, MSB = left. */
@@ -86,12 +108,12 @@ static const uint8_t iconMuted[8] =
 
 static inline uint16_t* pxAt(struct topCanvas* c, int x, int y)
 {
-	return &c->px[x * TOP_H + (TOP_H - 1 - y)];
+	return &c->px[x * LH + (LH - 1 - y)];
 }
 
 static inline void pset(struct topCanvas* c, int x, int y, uint16_t col)
 {
-	if((unsigned)x < TOP_W && (unsigned)y < TOP_H)
+	if((unsigned)x < (unsigned)LW && (unsigned)y < (unsigned)LH)
 		*pxAt(c, x, y) = col;
 }
 
@@ -198,7 +220,7 @@ static void textInverse(struct topCanvas* c, int x, int y, const char* s,
 				int px = x + i * CH + b, py = y + r;
 
 				if(!(g[r] & (0x80 >> b)) ||
-				   (unsigned)px >= TOP_W || (unsigned)py >= TOP_H)
+				   (unsigned)px >= (unsigned)LW || (unsigned)py >= (unsigned)LH)
 					continue;
 				*pxAt(c, px, py) =
 					*pxAt(c, px, py) == col->bar ? col->bg : col->bar;
@@ -363,8 +385,8 @@ static int sectionHeader(struct topCanvas* c, const struct topColors* col,
 {
 	if(right)
 	{
-		textRight(c, TOP_W - 2, y, s, col->accent);
-		hline(c, RCOL_X - 3, y + CH + 1, TOP_W - (RCOL_X - 3), col->bar);
+		textRight(c, LW - 2, y, s, col->accent);
+		hline(c, RCOL_X - 3, y + CH + 1, LW - (RCOL_X - 3), col->bar);
 	}
 	else
 	{
@@ -412,13 +434,13 @@ static void drawHeader(struct topCanvas* c, const struct topColors* col,
 	}
 
 	/* Clock */
-	textCenter(c, 0, TOP_W, HEADER_Y, v->clock, 30, col->text);
+	textCenter(c, 0, LW, HEADER_Y, v->clock, 30, col->text);
 
 	/* Battery: outline + nub, filled in proportion */
 	if(v->batteryPct >= 0)
 	{
 		int pct = v->batteryPct > 100 ? 100 : v->batteryPct;
-		int bx = TOP_W - 15, by = HEADER_Y;
+		int bx = LW - 15, by = HEADER_Y;
 
 		/* The fill touches the outline (no inner margin) */
 		rect(c, bx, by, 12, 8, col->text);
@@ -646,7 +668,7 @@ static void drawVolume(struct topCanvas* c, const struct topColors* col,
 
 	snprintf(buf, sizeof(buf), "%d%%", v->volumePct);
 	w = (2 + (int)strlen(buf)) * CH;	/* icon, space, text */
-	x = (TOP_W - w) / 2;
+	x = (LW - w) / 2;
 	bitmap8(c, x, VOL_Y, v->volumePct == 0 ? iconMuted : iconVolume, 1,
 	        v->volumePct == 0 ? col->dim : col->text);
 	text(c, x + 2 * CH, VOL_Y, buf, v->volumePct == 0 ? col->dim : col->text);
@@ -1029,16 +1051,16 @@ static void drawFooter(struct topCanvas* c, const struct topColors* col,
 		            col);
 
 	/* Shuffle */
-	bitmap8(c, TOP_W - 9, FOOT_Y, iconShuffle, 1,
+	bitmap8(c, LW - 9, FOOT_Y, iconShuffle, 1,
 	        v->shuffle ? col->text : col->dim);
-	textRight(c, TOP_W - 12, FOOT_Y, v->shuffle ? "on" : "off",
+	textRight(c, LW - 12, FOOT_Y, v->shuffle ? "on" : "off",
 	          v->shuffle ? col->text : col->dim);
 }
 
 void topUpdateFooter(struct topCanvas* c, const struct topColors* col,
                      const struct npView* v)
 {
-	fillRect(c, 0, BAR_Y, TOP_W, TOP_H - BAR_Y, col->bg);
+	fillRect(c, 0, BAR_Y, LW, LH - BAR_Y, col->bg);
 	drawFooter(c, col, v);
 }
 
@@ -1048,7 +1070,7 @@ void topUpdateFooter(struct topCanvas* c, const struct topColors* col,
 
 static void clear(struct topCanvas* c, uint16_t col)
 {
-	for(int i = 0; i < TOP_W * TOP_H; i++)
+	for(int i = 0; i < LW * LH; i++)
 		c->px[i] = col;
 }
 
@@ -1066,8 +1088,8 @@ void topDrawNowPlaying(struct topCanvas* c, const struct topColors* col,
 /* Splash: the logo centred above "Press A to start". The word and the
  * note bob up and down on a slow sine, the note (in front) a little
  * further and a little later, so it feels like it floats over the word. */
-#define SPLASH_LOGO_X	((TOP_W - LOGO_W) / 2)
-#define SPLASH_LOGO_Y	50
+#define SPLASH_LOGO_X	((LW - LOGO_W) / 2)
+#define SPLASH_LOGO_Y	(50 + (LH - TOP_H) / 2)
 #define SPLASH_TEXT_Y	(SPLASH_LOGO_Y + LOGO_H + 24)
 #define SPLASH_BOB_MS	2600	/* one up-and-down */
 #define SPLASH_WORD_AMP	2		/* pixels each way */
@@ -1093,13 +1115,13 @@ static void drawLogoLayer(struct topCanvas* c, const struct logoLayer* l,
 		const uint16_t*	src = l->px + i * l->h;
 		int				x = x0 + l->x + i;
 
-		if((unsigned)x >= TOP_W)
+		if((unsigned)x >= (unsigned)LW)
 			continue;
 		for(int j = 0; j < l->h; j++)
 		{
 			int y = y0 + l->y + j;
 
-			if(src[j] != LOGO_KEY && (unsigned)y < TOP_H)
+			if(src[j] != LOGO_KEY && (unsigned)y < (unsigned)LH)
 				*pxAt(c, x, y) = src[j];
 		}
 	}
@@ -1125,9 +1147,9 @@ void topDrawSplash(struct topCanvas* c, const struct topColors* col,
 	splashWordDy = splashBob(ms, SPLASH_WORD_AMP, 0.0f);
 	splashNoteDy = splashBob(ms, SPLASH_NOTE_AMP, SPLASH_NOTE_LAG);
 	drawSplashLogo(c, col);
-	textCenter(c, 0, TOP_W, SPLASH_TEXT_Y, "Press A to start", 50,
+	textCenter(c, 0, LW, SPLASH_TEXT_Y, "Press A to start", 50,
 	           col->text);
-	textRight(c, TOP_W - 2, HEADER_Y, version, col->dim);
+	textRight(c, LW - 2, HEADER_Y, version, col->dim);
 }
 
 bool topUpdateSplash(struct topCanvas* c, const struct topColors* col,

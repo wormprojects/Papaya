@@ -576,6 +576,17 @@ enum page_result searchInput(struct search* s, u32 kDown, u32 kHeld,
 	if(kDown & KEY_SELECT)
 		return PAGE_CLOSE;
 
+#ifdef PAPAYA_DESKTOP
+	/* The real keyboard types the query: text, Backspace, Return = results. */
+	if(s->typing)
+	{
+		int ch;
+
+		while((ch = macTypedChar()) != 0)
+			pressKey(s, ch == '\n' ? SS_KEY_DONE : ch);
+	}
+#endif
+
 	if((r = touchInput(s, kDown, kHeld, b)) != PAGE_STAY)
 		return r;
 
@@ -675,4 +686,51 @@ enum page_result searchInput(struct search* s, u32 kDown, u32 kHeld,
 		s->dirty = true;
 	}
 	return PAGE_STAY;
+}
+
+/* macOS branch: wheel / trackpad scrolling of the results. */
+void searchScrollBy(struct search* s, int rows)
+{
+	int shown = rowsShown(s);
+	int maxTop = s->listed - shown;
+	int top = s->top + rows;
+
+	if(maxTop < 0)
+		maxTop = 0;
+	if(top > maxTop)
+		top = maxTop;
+	if(top < 0)
+		top = 0;
+	if(top == s->top)
+		return;
+	s->top = top;
+	if(s->selected >= 0)
+	{
+		if(s->selected < top)
+			s->selected = top;
+		if(s->selected >= top + shown)
+			s->selected = top + shown - 1;
+	}
+	s->dirty = true;
+}
+
+/* macOS branch: which result a click landed on. */
+int searchRowAt(const struct search* s, int px, int py)
+{
+	struct ssView	v;
+	int				row;
+
+	if(s->typing)
+		return -1;		/* the keyboard is up: the clicks are for keys */
+	memset(&v, 0, sizeof(v));
+	v.typing = s->typing;
+	v.found = s->found;
+	v.listed = s->listed;
+	v.rows = s->listed - s->top;
+	if(v.rows > rowsShown(s))
+		v.rows = rowsShown(s);
+	if(ssOnScrollbar(&v, px, py))
+		return -1;
+	row = ssRowAt(&v, px, py);
+	return row >= 0 ? s->top + row : -1;
 }

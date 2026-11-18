@@ -46,6 +46,12 @@ void uiApplyTheme(struct screens* s, const struct theme_t* theme);
  */
 void uiRequestRedraw(void);
 
+/** macOS branch: show the pixel pages (uiBottomPresent) on this console. */
+void uiSetBottomConsole(PrintConsole* c);
+
+/** macOS branch: resize the top screen to w x h pixels (see topSetSize). */
+void uiSetTopSize(int w, int h);
+
 /**
  * Change the screen brightness by `delta` levels and redraw.
  */

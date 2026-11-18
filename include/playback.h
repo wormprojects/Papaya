@@ -59,6 +59,13 @@ struct decoder_fn
 	 * \return		0 on success, -1 on failure.
 	 */
 	int (* seek)(size_t sample);
+
+	/**
+	 * Optional. Called once before playing backwards: make seeks exact
+	 * (mp3: scan the file; may take a moment) and the length exact.
+	 * Forward-only players never call it.
+	 */
+	void (* prepareExactSeek)(void);
 };
 
 struct playbackInfo_t
@@ -124,5 +131,21 @@ void setPlaybackSpeed(float speed);
  * Get current playback speed multiplier.
  */
 float getPlaybackSpeed(void);
+
+/**
+ * Reverse playback (1.5.0). Off: the speed range is 0.1 .. 3.0. On: -3.0 ..
+ * 3.0, where negative plays the song backwards and 0.0 pauses (internally;
+ * the song stays "playing"). Turning it off while the speed is 0 or
+ * negative puts the speed back to 1.0.
+ */
+void setReverseAllowed(bool allowed);
+bool getReverseAllowed(void);
+
+/**
+ * True once (then cleared) if the last song ended because reverse playback
+ * ran back to its start, so player.c goes to the previous song instead of
+ * the next one.
+ */
+bool playbackTakeReachedStart(void);
 
 #endif
